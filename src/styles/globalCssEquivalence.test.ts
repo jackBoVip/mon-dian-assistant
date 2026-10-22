@@ -15,9 +15,13 @@ import { describe, expect, it } from 'vitest';
  * 允许的变动只有 ALLOWED 里逐条写明原因的那几处；新增一条未登记的变动同样会红。
  *
  * 基线**显式钉死在 BASELINE_SNAPSHOT 这一枚目录名上**，并且下面有一条守卫校验它的 sha256。
- * 早期版本是"按目录名排序取最新的一份快照"，那是个能自我取消的陷阱：本项目用 `.backup-*`
+ * 早期版本是"按目录名排序取最新的一份快照"，那是个能自我取消的陷阱：本项目原先用 `.backup-*`
  * 当版本控制，任何一次开工前快照都会变成新基线，对账随即退化成"新 vs 新"——
  * 门禁还在跑，但它已经不再比任何东西（2026-10-20 审查 F31 就是这条）。
+ *
+ * 2026-10-22 仓库改用 git 之后，`.backup-*` 快照被清理掉了，基线跟着整文件报错（那批快照是
+ * 可以随时删的产物，不该当依赖）。所以基线搬进版本库里的固定目录 `baseline-css-20261019/`，
+ * 内容与当初那枚快照逐字节相同（`BASELINE.css.sha256` 三条全部对得上），只是不再挂在快照目录上。
  */
 
 import { createHash } from 'node:crypto';
@@ -28,16 +32,16 @@ const postcss = require('postcss');
 const ROOT = resolve(process.cwd());
 const NEW_PATH = join(ROOT, 'src/styles/global.css');
 
-/** AD 轮（全局现代化）开工前的那一份快照；要换基线必须显式改这一行，并在交付文档记账。 */
-const BASELINE_SNAPSHOT = '.backup-20261019-132949';
+/** AD 轮（全局现代化）开工前的那一份基线；要换基线必须显式改这一行，并在交付文档记账。 */
+const BASELINE_SNAPSHOT = 'baseline-css-20261019';
 const BASELINE_DIR = join(ROOT, BASELINE_SNAPSHOT);
 
 function findBaseline(): string {
   const p = join(BASELINE_DIR, 'src/styles/global.css');
   if (!existsSync(p)) {
     throw new Error(
-      `基线快照 ${BASELINE_SNAPSHOT}/src/styles/global.css 不在。` +
-        '本条对账的结论完全依赖这份文件，不许悄悄换一份或删掉——要么恢复它，要么显式改 BASELINE_SNAPSHOT 并在 docs/交付状态与验收.md 记一笔。',
+      `基线 ${BASELINE_SNAPSHOT}/src/styles/global.css 不在。` +
+        '本条对账的结论完全依赖这份文件，不许悄悄换一份或删掉——要么从 git 历史恢复它，要么显式改 BASELINE_SNAPSHOT 并在 docs/交付状态与验收.md 记一笔。',
     );
   }
   return p;
@@ -439,8 +443,8 @@ describe(`global.css 与基线快照逐声明等价（基线取 ${findBaseline()
   });
 
   it('基线文件与它登记的 sha256 对得上（主门禁不许被静默换掉）', () => {
-    // 本项目没有 git，`.backup-*` 快照就是版本控制；而开工前打一份新快照是常规动作。
-    // 基线一旦漂到"改动之后的某一份"，下面那几条对账会立刻变成新 vs 新，全绿但不再比任何东西。
+    // 基线目录是仓库里的一份固定副本，不参与日常构建产物；它一旦漂到"改动之后的那一份"，
+    // 下面那几条对账会立刻变成新 vs 新，全绿但不再比任何东西。
     const recorded = recordedHashes();
     expect(recorded.size, `${BASELINE_SNAPSHOT}/BASELINE.css.sha256 缺失或格式不对，无法校验基线完整性`).toBeGreaterThan(0);
     for (const [rel, hex] of recorded) {
