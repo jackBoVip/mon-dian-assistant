@@ -10,12 +10,20 @@ src-tauri/binaries/
 # 本地数据与密钥（永不提交）
 *.db
 *.db-journal
+# SQLCipher 的 WAL 与共享内存副本里是尚未合并回主库的页，含明文凭据的风险与 .db 同级
+*.db-wal
+*.db-shm
 *.sqlite
+*.sqlite-journal
 .env
 .env.*
 *.key
 *.p12
 *.mobileprovision
+
+# 视觉轮开工前打的快照目录：throwaway 产物，不再充当版本控制。
+# 对账基线已搬进版本库固定目录 baseline-css-20261019/（见 globalCssEquivalence.test.ts 的 BASELINE_SNAPSHOT）
+.backup-*/
 
 # 编辑器与系统
 .DS_Store
