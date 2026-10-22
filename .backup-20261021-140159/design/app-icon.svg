@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  应用图标源文件（完整底板版）—— 2026-10-18 R 轮起生效，交付方提供的原型逐字照抄。
+
+  构图：深色圆角方块底板（rx=225/1024 ≈ macOS 圆角比）+ 网格纹理 + 环境光晕 + 边缘高光
+        + 两圈虚线/实线辅助环（信息产业／数据）+ 绿色渐变闪电 + 内部走线。
+        **尖上的五枚白色节点已撤掉**（2026-10-18 R 轮三批，交付方看了真机截图点名去掉；
+        随之作废的还有 defs 里那枚只服务于它们的 nodeGlow 滤镜）。
+
+  这是 **导出素材的唯一真源**，不要直接改派生出来的 PNG：
+    1. 改完本文件 → `sips -s format png design/app-icon.svg` 输出到 design/app-icon-1024.png
+       （本机实测：sips 会渲染 filter/pattern/rgba 描边，圆角外保持透明 alpha；
+         qlmanage 会把透明角铺成白底，不要用它的输出。
+         另注：XML 注释里不得出现 ASCII 双连字符，否则 CoreSVG 直接解析失败、光栅化不出来。）
+    2. `npx tauri icon design/app-icon-1024.png` → 重写 src-tauri/icons 全套（含 .icns/.ico）。
+    3. 不要把 SVG 直接喂给 tauri icon：它内部的 SVG 光栅化不支持 filter，会丢掉闪电的内发光。
+
+  界面里用的不是这一版，是 design/app-mark.svg（无底板版，经 src/assets/brand/logo.svg 引入），
+  两版的闪电几何完全一致。
+-->
+<svg id="app-icon" viewBox="0 0 1024 1024" width="1024" height="1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 背景渐变 -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1c1c1f" />
+      <stop offset="1" stop-color="#09090b" />
+    </linearGradient>
+
+    <!-- 环境光晕 -->
+    <radialGradient id="glowGrad" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- 闪电渐变 -->
+    <linearGradient id="boltGrad" x1="512" y1="200" x2="512" y2="824" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6ee7b7" />
+      <stop offset="0.5" stop-color="#10b981" />
+      <stop offset="1" stop-color="#047857" />
+    </linearGradient>
+
+    <!-- 闪电内发光 -->
+    <filter id="innerGlow">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" result="shadowDiff" />
+      <feFlood flood-color="#ffffff" flood-opacity="0.3" />
+      <feComposite in2="shadowDiff" operator="in" />
+      <feComposite in2="SourceGraphic" operator="over" />
+    </filter>
+
+    <!-- 微弱的网格纹理 -->
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M 64 0 L 0 0 0 64" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="2"/>
+    </pattern>
+  </defs>
+
+  <!-- 图标底板 (macOS 标准圆角) -->
+  <rect width="1024" height="1024" rx="225" fill="url(#bgGrad)" />
+
+  <!-- 网格与光晕叠加 -->
+  <rect width="1024" height="1024" rx="225" fill="url(#grid)" />
+  <rect width="1024" height="1024" rx="225" fill="url(#glowGrad)" />
+
+  <!-- 边缘高光 -->
+  <rect x="4" y="4" width="1016" height="1016" rx="221" stroke="rgba(255,255,255,0.08)" stroke-width="8" />
+
+  <!-- 背景辅助图形 (代表信息产业/数据) -->
+  <circle cx="512" cy="512" r="280" stroke="rgba(16,185,129,0.1)" stroke-width="4" stroke-dasharray="12 24" />
+  <circle cx="512" cy="512" r="380" stroke="rgba(16,185,129,0.05)" stroke-width="2" />
+
+  <!-- 闪电主体 -->
+  <path d="M 560 180 L 340 560 L 490 560 L 400 844 L 700 440 L 540 440 Z"
+        fill="url(#boltGrad)"
+        filter="url(#innerGlow)" />
+
+  <!-- 闪电内部走线 (科技感细节) -->
+  <path d="M 560 180 L 540 440 M 340 560 L 490 560 M 400 844 L 700 440"
+        stroke="rgba(255,255,255,0.2)" stroke-width="8" stroke-linecap="round" />
+</svg>

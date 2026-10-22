@@ -1,0 +1,9 @@
+目标名称,目标类型,地址,精确Origin,协议,主机,端口,分组,账号别名,标签,用户名,密码,令牌,私钥,私钥口令,认证方式,备注,设为默认
+生产跳板机,terminal,ssh://10.60.1.21:22,,ssh,10.60.1.21,22,基础设施,运维-只读,生产，跳板机,ops_ro,Demo@Terminal2026,,,,,经 VPN 后访问；仅限内网,是
+生产跳板机,terminal,ssh://10.60.1.21:22,,ssh,10.60.1.21,22,基础设施,运维-管理员,生产，跳板机,ops_admin,Demo@Terminal2026!adm,,,,,高风险操作请走变更单,
+核心交换区堡垒机,terminal,ssh://10.60.1.35:22,,ssh,10.60.1.35,22,基础设施,网络-只读,生产，网络设备,net_ro,Demo@Switch2026,,,,,只读账号；禁止配置下发,
+财务区 Windows 跳板,terminal,rdp://10.60.2.18:3389,,rdp,10.60.2.18,3389,财务系统,远程桌面,生产，RDP,fin_rdp,Demo@Rdp2026,,,,,需先连 VPN；仅工作时间开放,
+营销库 MySQL 主库,database,mysql://10.20.30.40:3306,,mysql,10.20.30.40,3306,业务系统,应用只读,生产，MySQL,app_ro,Demo@Mysql2026,,,,,内网域名 db-mkt-01,是
+营销库 MySQL 主库,database,mysql://10.20.30.40:3306,,mysql,10.20.30.40,3306,业务系统,报表账号,生产，MySQL,rpt_user,Demo@Mysql2026!rpt,,,,,仅允许 SELECT；报表任务专用,
+财务库 Oracle 生产,database,oracle://10.20.40.15:1521,,oracle,10.20.40.15,1521,财务系统,DBA,生产，Oracle,fin_dba,Demo@Oracle2026,,,,,变更窗口：周六 00:00-04:00,
+数据中台 PostgreSQL,database,postgresql://10.20.50.8:5432,,postgresql,10.20.50.8,5432,数据平台,分析只读,生产，PostgreSQL,analyst,Demo@Pg2026,,,,,只读副本；勿写主库,

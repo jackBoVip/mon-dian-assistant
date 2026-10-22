@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  由 tauri-bundler 在打 macOS 产物时合并进 `Contents/Info.plist`
+  （`tauri.conf.json` 的 `bundle.macOS.infoPlist` 指向本文件）。
+
+  为什么必须有这一份：bundler 生成的默认模板把 `CFBundleDevelopmentRegion` 写死成 `English`，
+  而产物里没有任何 `.lproj` 目录，于是 macOS 认定"本应用只支持英语"。凡由系统绘制的界面——
+  打开/保存面板的侧栏（Recents / Favorites / Locations / New Folder / Cancel / Open）、
+  系统消息框按钮等——一律回落英文，和我们自己的中文界面拼成一张中英混排的面板
+  （面板标题「选择要导入的文件（CSV 或 Excel）」是应用传的，所以只有它是中文）。
+  声明 `zh-Hans` 之后，系统按操作者的 `AppleLanguages` 命中中文，这些字符串跟着变中文。
+
+  只声明 zh-Hans：本应用界面只有中文一套，声明 en 等于对外承诺"英文系统下给我英文界面"，
+  而那时应用内仍是中文，反而更不一致。
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>zh-Hans</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>zh-Hans</string>
+  </array>
+</dict>
+</plist>

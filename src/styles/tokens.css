@@ -1,0 +1,414 @@
+/* 设计令牌（Design Tokens）
+ * 组件只允许消费这些变量，不得散落硬编码颜色。字面颜色只允许出现在本文件
+ * （由 themeContrast.test.ts 的静态守卫强制）。
+ *
+ * ── S 轮（2026-10-18）：主题集合换成交付方原型的四套 ─────────────────────────
+ * 上一轮的"风格 × 明暗模式"两轴（8 套主题 × data-mode）整体作废，改为原型那四套自洽的
+ * 界面风格：极光液态玻璃 / 极简纯白 / 曜石暗夜 / 赛博霓虹。明暗身份由主题本身携带，
+ * 不再有 `data-mode` 轴，也没有"玻璃效果强度"滑杆（每套主题的模糊值与透明度是原型钉死的）。
+ *
+ * 取值口径：**逐字照抄原型字面值**（使用者 2026-10-18 的决定）。原型里哪一档对比度达不到
+ * 4.5:1，就保留哪一档，改的是守卫而不是数值——豁免清单与逐条实测比值写在
+ * themeContrast.test.ts 的 PROTOTYPE_EXEMPT 表里，交付文档 §1-S 有对照表。
+ *
+ * 只有三处是原型没给、界面又必须要有的，补的取值保持色相与饱和度、只挪明度，逐条标注：
+ *   1) `--shadow-sm`：原型有六处 `box-shadow: var(--shadow-sm)` 却从未定义这枚令牌，
+ *      那几处（导航选中态、图标钮悬停、列表选中行、表格容器）在浏览器里等于"无阴影"。
+ *      本轮补一档，否则选中态只剩面色、在玻璃主题上几乎读不出来。
+ *   2) `--t-warning` / `--t-accent` / `--t-border-strong`：原型没有这三枚，
+ *      但我们的徽标、启动器选中行与强调描边在用。warning 直接复用原型的星色，
+ *      accent 复用原型的 primary-hover，border-strong 按各套的 border-glass 同色相提一档。
+ *   3) 焦点环 `--focus-ring`：原型通篇没有 :focus-visible，无障碍基线要求焦点可见，
+ *      取各套自己的 primary（四套里它与底色都至少差 3:1）。
+ */
+
+:root {
+  /* ---------------- 尺度类令牌（与主题无关） ---------------- */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  /* 原型：卡片 20px、模态 24px、浮层 16px。--radius-md 仍是"卡片/输入框"默认软角。
+   * 原型另有一档"容器 32px"，随 2026-10-18 满幅改造一起删掉了（见 global.css 壳层那段）。 */
+  --radius-xs-outer: 6px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+  --radius-full: 999px;
+  --radius-btn: var(--radius-full);
+
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 24px;
+  --spacing-6: 32px;
+  --spacing-7: 48px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  /* 衬线展示字：只用于认证页主标题。原型用 Inter，内网离线不引 Web 字体，正文一律回落到系统无衬线。 */
+  --font-display: Georgia, "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", "Times New Roman", serif;
+
+  /* 顶栏 80px（品牌行 + 胶囊导航 + 图标组，单行），内容左右分栏 240 + 弹性列，最大 1200。
+   * --content-padding-top 取的是原型那枚 24px，但它现在只剩一个用途：顶栏与内容列之间那道间距。
+   * 原本同一枚令牌还管着"窗口与玻璃容器之间的外圈留白"，那档 2026-10-18 按交付方要求撤了，
+   * 连带删掉的还有 --radius-shell(32px) 与 --shell-max-width(1400px)——见 global.css 壳层那段。 */
+  --content-padding-top: 24px;
+  --topbar-height: 80px;
+  /* macOS 主窗把原生标题栏换成了玻璃（tauri.conf 的 titleBarStyle: Overlay + hiddenTitle），
+   * 红绿灯浮在界面之上，那 28px 是 AppKit 现在这条标题栏带的高度，也是它保留的窗口拖动带。
+   * 其它平台仍走原生标题栏——窗口内容本来就从它下方开始，所以这一档是 0。 */
+  --titlebar-inset: 0px;
+  --sidebar-width: 240px;
+  --content-max-width: 1200px;
+  --content-gap: 32px;
+  --content-padding-x: 40px;
+
+  /* 主题切换时整块氛围（底色、光斑、面）跟着补间，原型给的是 0.6s */
+  --motion-theme-switch: 600ms;
+
+  /* ---------------- 焦点可见（无障碍基线，原型未画） ---------------- */
+  --focus-ring: var(--t-primary);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* 主题选择器里的四枚预览色块：与主题无关，是"那一套长什么样"的名片，
+   * 所以写在 :root 而不是各主题块里；渐变值逐字取自原型 .preview-* 四条规则。 */
+  --preview-glass: linear-gradient(135deg, rgba(255, 255, 255, 0.7), rgba(235, 219, 250, 0.5));
+  --preview-minimal: #ffffff;
+  --preview-obsidian: #18181b;
+  --preview-cyber: linear-gradient(135deg, #082f49, #06b6d4);
+}
+
+/* data-os 只由主窗入口 main.tsx 在渲染前写入；快捷启动器那扇窗本来就是无边的，
+ * 它那份入口（launcher.tsx）不写这个属性，--titlebar-inset 留在 0，那 28px 不会挤进卡片。 */
+:root[data-os="mac"] {
+  --titlebar-inset: 28px;
+}
+
+/* ========================================================================
+ * 1. 极光液态（出厂默认）
+ * ==================================================================== */
+[data-theme="glass"] {
+  --t-primary: #4f46e5;
+  --t-primary-hover: #4338ca;
+  --t-primary-glow: rgba(79, 70, 229, 0.25);
+
+  /* 三档文字：原型 --text-dark / --text-main / --text-muted，分别落到标题与强文本、正文、次要文字 */
+  --t-text: #111827;
+  --t-text-body: #4b5563;
+  --t-text-muted: #6b7280;
+  --t-text-inverse: #ffffff;
+  --t-on-primary-muted: rgba(255, 255, 255, 0.78);
+
+  --t-danger: #e11d48;
+  --t-success: #10b981;
+  --t-success-soft: rgba(16, 185, 129, 0.1);
+  --t-warning: #f59e0b;
+  --t-star: #f59e0b;
+  --t-accent: var(--t-primary-hover);
+
+  /* 玻璃三档面：容器 / 实心浮层 / 轻底。alpha 逐字照抄原型 --bg-glass* */
+  --t-surface: rgba(255, 255, 255, 0.3);
+  --t-surface-elevated: rgba(255, 255, 255, 0.85);
+  --t-surface-sunken: rgba(255, 255, 255, 0.15);
+  --t-border: rgba(255, 255, 255, 0.6);
+  --t-border-subtle: rgba(255, 255, 255, 0.2);
+  --t-border-strong: rgba(255, 255, 255, 0.85);
+  --t-divider: rgba(0, 0, 0, 0.06);
+  --row-hover: rgba(255, 255, 255, 0.4);
+
+  --t-bg: #f1ebf6;
+  --blob-1: rgba(253, 216, 215, 0.8);
+  --blob-2: rgba(196, 226, 255, 0.8);
+  --blob-3: rgba(235, 219, 250, 0.8);
+  --blur: blur(40px);
+  --blur-overlay: blur(8px);
+
+  --shadow-dropdown: 0 12px 48px -8px rgba(0, 0, 0, 0.15);
+  --shadow-btn: 0 8px 24px -4px var(--t-primary-glow);
+  --shadow-sm: 0 2px 8px rgba(17, 24, 39, 0.06);
+  --glow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+/* ========================================================================
+ * 2. 极简纯白
+ * 玻璃语言在这里退化成实心白纸：光斑整块撤掉（transparent）、模糊归零。
+ * ==================================================================== */
+[data-theme="minimal"] {
+  --t-primary: #18181b;
+  --t-primary-hover: #3f3f46;
+  --t-primary-glow: rgba(0, 0, 0, 0.1);
+
+  --t-text: #09090b;
+  --t-text-body: #52525b;
+  --t-text-muted: #a1a1aa;
+  --t-text-inverse: #ffffff;
+  --t-on-primary-muted: rgba(255, 255, 255, 0.72);
+
+  --t-danger: #e11d48;
+  --t-success: #10b981;
+  --t-success-soft: rgba(16, 185, 129, 0.08);
+  --t-warning: #f59e0b;
+  --t-star: #f59e0b;
+  --t-accent: var(--t-primary-hover);
+
+  --t-surface: rgba(255, 255, 255, 1);
+  --t-surface-elevated: rgba(255, 255, 255, 1);
+  --t-surface-sunken: rgba(244, 244, 245, 1);
+  --t-border: rgba(0, 0, 0, 0.08);
+  --t-border-subtle: rgba(0, 0, 0, 0.04);
+  --t-border-strong: rgba(0, 0, 0, 0.16);
+  --t-divider: rgba(0, 0, 0, 0.06);
+  --row-hover: rgba(0, 0, 0, 0.03);
+
+  --t-bg: #fafafa;
+  --blob-1: transparent;
+  --blob-2: transparent;
+  --blob-3: transparent;
+  --blur: blur(0px);
+  --blur-overlay: blur(8px);
+
+  --shadow-dropdown: 0 12px 32px -4px rgba(0, 0, 0, 0.08);
+  --shadow-btn: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --shadow-sm: 0 1px 3px rgba(9, 9, 11, 0.06);
+  --glow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* ========================================================================
+ * 3. 曜石暗夜
+ * 主色是亮的（#e4e4e7），按钮上的字反而是墨色——这一套的反白关系与玻璃/极简相反。
+ * ==================================================================== */
+[data-theme="obsidian"] {
+  --t-primary: #e4e4e7;
+  --t-primary-hover: #ffffff;
+  --t-primary-glow: rgba(255, 255, 255, 0.15);
+
+  --t-text: #fafafa;
+  --t-text-body: #a1a1aa;
+  --t-text-muted: #71717a;
+  --t-text-inverse: #18181b;
+  --t-on-primary-muted: rgba(24, 24, 27, 0.72);
+
+  --t-danger: #fb7185;
+  --t-success: #34d399;
+  --t-success-soft: rgba(52, 211, 153, 0.15);
+  --t-warning: #fbbf24;
+  --t-star: #fbbf24;
+  --t-accent: var(--t-primary-hover);
+
+  --t-surface: rgba(24, 24, 27, 0.6);
+  --t-surface-elevated: rgba(39, 39, 42, 0.95);
+  --t-surface-sunken: rgba(255, 255, 255, 0.02);
+  --t-border: rgba(255, 255, 255, 0.08);
+  --t-border-subtle: rgba(255, 255, 255, 0.04);
+  --t-border-strong: rgba(255, 255, 255, 0.16);
+  --t-divider: rgba(255, 255, 255, 0.08);
+  --row-hover: rgba(255, 255, 255, 0.06);
+
+  --t-bg: #09090b;
+  --blob-1: transparent;
+  --blob-2: transparent;
+  --blob-3: transparent;
+  --blur: blur(32px);
+  --blur-overlay: blur(8px);
+
+  --shadow-dropdown: 0 12px 48px -8px rgba(0, 0, 0, 0.6);
+  --shadow-btn: 0 4px 12px rgba(255, 255, 255, 0.1);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --glow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* ========================================================================
+ * 4. 赛博霓虹
+ * 唯一一套带氛围光的：光斑是青与紫，阴影里混进 0.1~0.4 的青色辉光。
+ * ==================================================================== */
+[data-theme="cyber"] {
+  --t-primary: #06b6d4;
+  --t-primary-hover: #22d3ee;
+  --t-primary-glow: rgba(6, 182, 212, 0.4);
+
+  --t-text: #ecfeff;
+  --t-text-body: #94a3b8;
+  --t-text-muted: #475569;
+  --t-text-inverse: #082f49;
+  --t-on-primary-muted: rgba(8, 47, 73, 0.75);
+
+  --t-danger: #f43f5e;
+  --t-success: #22d3ee;
+  --t-success-soft: rgba(34, 211, 238, 0.15);
+  --t-warning: #fde047;
+  --t-star: #fde047;
+  --t-accent: var(--t-primary-hover);
+
+  --t-surface: rgba(8, 20, 35, 0.6);
+  --t-surface-elevated: rgba(10, 25, 45, 0.95);
+  --t-surface-sunken: rgba(6, 182, 212, 0.05);
+  --t-border: rgba(6, 182, 212, 0.3);
+  --t-border-subtle: rgba(6, 182, 212, 0.1);
+  --t-border-strong: rgba(34, 211, 238, 0.55);
+  --t-divider: rgba(6, 182, 212, 0.15);
+  --row-hover: rgba(6, 182, 212, 0.15);
+
+  --t-bg: #030712;
+  --blob-1: rgba(6, 182, 212, 0.15);
+  --blob-2: rgba(139, 92, 246, 0.1);
+  --blob-3: transparent;
+  --blur: blur(40px);
+  --blur-overlay: blur(8px);
+
+  --shadow-dropdown: 0 12px 48px -8px rgba(0, 0, 0, 0.8), 0 0 20px rgba(6, 182, 212, 0.2);
+  --shadow-btn: 0 0 20px rgba(6, 182, 212, 0.4);
+  --shadow-sm: 0 2px 8px rgba(6, 182, 212, 0.18);
+  --glow-inset: inset 0 0 10px rgba(6, 182, 212, 0.1);
+}
+
+/* ========================================================================
+ * 派生层：全部从当前主题的令牌算出来，不引入第二个色相。
+ * 写在 :root 是因为 data-theme 就在 documentElement 上，var() 在使用点做文本替换，
+ * 四套主题不需要各写一遍。
+ * ==================================================================== */
+:root {
+  /* 面上沿高光与凹陷内阴影：--glow-inset 由各套主题自己给（玻璃是 80% 白、暗夜只有 5%） */
+  --shadow-inset: rgba(0, 0, 0, 0.18);
+
+  /* 主色氛围：一切光晕都从当前主题的主色派生 */
+  --surface-glow: color-mix(in srgb, var(--t-primary) 9%, transparent);
+
+  /* 列表/表格"当前行"与"悬停行"：原型只有 --hover-bg 一枚（这里叫 --row-hover），
+   * 选中行走的是"实心浮层面 + 描边"那一档（见 .system-item.active），不再单独派生一层色。 */
+  --nav-hover: var(--row-hover);
+  --nav-active: var(--t-surface-elevated);
+
+  /* 浮层遮罩：原型四套共用一条 rgba(0,0,0,.4) + blur(8px) */
+  --overlay-veil: rgba(0, 0, 0, 0.4);
+
+  /* 同心圆角：外层 = 内层 + 内边距 + 边框 */
+  --radius-nested: calc(var(--radius-md) - var(--radius-xs));
+  --radius-outer: calc(var(--radius-md) + var(--radius-xs));
+}
+
+/* ========================================================================
+ * 认证场景（首次初始化 / 解锁 / 密钥同意 / 启动失败）
+ * 版式沿用 I 轮那套（品牌条 + 铁塔 + 右栏裸字段），色彩改为跟随当前主题派生。
+ * 原型没有认证页，所以这一层的档位是"由主题推导"，不是照抄：
+ * 亮档 = glass / minimal，暗档 = obsidian / cyber，两档的染底方向与蒙版深浅各自定。
+ * ==================================================================== */
+:root {
+  --scene-canvas: var(--t-bg);
+  --scene-glow-a: color-mix(in srgb, var(--t-primary) 12%, var(--t-bg));
+  --scene-glow-b: color-mix(in srgb, var(--t-accent) 12%, var(--t-bg));
+  /* 噪点层的最坏档：那层 fractalNoise 是 overlay 混合，解析器算不出合成结果，
+   * 按"把反色往面上提 3%"记一档，压正文的落点一律按这一档验（CSS 实际给 2.5%，比它轻）。 */
+  --scene-grain-worst: color-mix(in srgb, var(--t-text-inverse) 3%, transparent);
+  --scene-veil: color-mix(in srgb, var(--t-text-inverse) 3%, var(--scene-glow-a));
+  /* 报错条与风险说明盒的底：接近实心，只抬 12% 的浮层面做"一块面" */
+  --scene-panel: color-mix(in srgb, var(--t-surface-elevated) 12%, var(--t-bg));
+  --scene-panel-line: var(--t-border);
+  /* 下划线式字段：静置描边不能用主色（玻璃套的靛蓝在染底上不足 3:1），取文字色 55% */
+  --scene-line: color-mix(in srgb, var(--t-text) 55%, transparent);
+  --scene-focus: var(--t-text);
+  /* 主 CTA：整宽实心条，取"前景当底色"的反相档 */
+  --scene-cta-bg: var(--t-text);
+  --scene-cta-ink: var(--t-bg);
+  /* 主题切换器：轨道是底上的一层轻染，滑块用页面底色（实心，切换时才看得出走过去了） */
+  --scene-switch-track: color-mix(in srgb, var(--t-text) 10%, var(--t-bg));
+  --scene-switch-thumb: var(--t-bg);
+  --scene-switch-btn-w: 36px;
+  --scene-switch-btn-h: 30px;
+  --scene-switch-pad: 3px;
+  --scene-switch-index: 0;
+  /* 输电铁塔（纯装饰，aria-hidden）：结构线用文字色三档，灯与脉冲用当前主题的主色/强调色 */
+  --scene-tower-strong: color-mix(in srgb, var(--t-text) 72%, var(--t-bg));
+  --scene-tower-soft: color-mix(in srgb, var(--t-text) 40%, var(--t-bg));
+  --scene-tower-tick: color-mix(in srgb, var(--t-text) 22%, var(--t-bg));
+  --scene-pulse: color-mix(in srgb, var(--t-primary) 55%, var(--scene-glow-a));
+  --scene-node-core: var(--t-accent);
+  --scene-node-glow: color-mix(in srgb, var(--t-accent) 30%, var(--scene-glow-a));
+  --scene-tip-core: var(--t-primary);
+  --scene-tip-glow: color-mix(in srgb, var(--t-primary) 30%, var(--scene-glow-b));
+  /* 噪点：SVG 内联在令牌里，整页只此一处。%23 而不是 # ——URL 里必须转义。 */
+  --scene-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* 认证背景的五档横向渐变与两道蒙版：左深右浅、越往右变化幅度越大（使用者口径 2026-10-17）。
+ * 亮档靠逐步撤掉主色染（30% → 0%），暗档靠逐步加上主色染（4% → 72%）。
+ * 凸度由 themeContrast.test.ts 的"右四分位增量 ≥ 左四分位 ×3"钉住；
+ * 止点与 global.css 里 .auth-bg 那条 linear-gradient 的几何止点严格对应，改一边必须改另一边。 */
+:root[data-theme="glass"],
+:root[data-theme="minimal"] {
+  --scene-scrim: color-mix(in srgb, #ffffff 78%, var(--t-bg));
+  --scene-ramp-1: color-mix(in srgb, var(--t-primary) 30%, var(--t-bg));
+  --scene-ramp-2: color-mix(in srgb, var(--t-primary) 26%, var(--t-bg));
+  --scene-ramp-3: color-mix(in srgb, var(--t-primary) 22%, var(--t-bg));
+  --scene-ramp-4: color-mix(in srgb, var(--t-primary) 14%, var(--t-bg));
+  --scene-ramp-5: var(--t-bg);
+  --scene-scrim-r: color-mix(in srgb, var(--scene-scrim) 35%, transparent);
+  --scene-scrim-m: color-mix(in srgb, var(--scene-scrim) 55%, transparent);
+  --scene-scrim-e: color-mix(in srgb, var(--scene-scrim) 78%, transparent);
+  --scene-scrim-t: color-mix(in srgb, var(--scene-scrim) 45%, transparent);
+  --scene-scrim-c: color-mix(in srgb, var(--scene-scrim) 26%, transparent);
+  --scene-scrim-b: color-mix(in srgb, var(--scene-scrim) 55%, transparent);
+}
+
+:root[data-theme="obsidian"],
+:root[data-theme="cyber"] {
+  --scene-scrim: color-mix(in srgb, #000000 45%, var(--t-bg));
+  --scene-ramp-1: color-mix(in srgb, var(--t-primary) 4%, var(--t-bg));
+  --scene-ramp-2: color-mix(in srgb, var(--t-primary) 6%, var(--t-bg));
+  --scene-ramp-3: color-mix(in srgb, var(--t-primary) 14%, var(--t-bg));
+  --scene-ramp-4: color-mix(in srgb, var(--t-primary) 34%, var(--t-bg));
+  --scene-ramp-5: color-mix(in srgb, var(--t-primary) 72%, var(--t-bg));
+  --scene-scrim-r: color-mix(in srgb, var(--scene-scrim) 28%, transparent);
+  --scene-scrim-m: color-mix(in srgb, var(--scene-scrim) 62%, transparent);
+  --scene-scrim-e: color-mix(in srgb, var(--scene-scrim) 86%, transparent);
+  --scene-scrim-t: color-mix(in srgb, var(--scene-scrim) 38%, transparent);
+  --scene-scrim-c: color-mix(in srgb, var(--scene-scrim) 22%, transparent);
+  --scene-scrim-b: color-mix(in srgb, var(--scene-scrim) 46%, transparent);
+}
+
+/* ========================================================================
+ * 动效层：时长是分工参数不是手感参数。
+ * 按压与高频交互 ≤150ms；入场可以慢，出场必须比入场快；主题切换那档 600ms 归上面。
+ * 减少动态效果时位移与缩放一起归零，否则残留的 0ms 位移仍会闪一下。
+ * ==================================================================== */
+:root {
+  --motion-duration-base: 180ms;
+  --motion-duration-slow: 260ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --motion-ease-spring: cubic-bezier(0.34, 1.42, 0.64, 1);
+  --motion-ease-pop: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --motion-duration-press: 150ms;
+  --motion-duration-hover: 120ms;
+  --motion-duration-entrance: 300ms;
+
+  --press-scale: 0.96;
+  --overlay-offset: 12px;
+  --overlay-blur: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-theme-switch: 0ms;
+    --motion-duration-base: 0ms;
+    --motion-duration-slow: 0ms;
+    --motion-duration-press: 0ms;
+    --motion-duration-hover: 0ms;
+    --motion-duration-entrance: 0ms;
+    --press-scale: 1;
+    --overlay-offset: 0px;
+    --overlay-blur: 0px;
+  }
+}
+
+[data-reduce-motion="true"] {
+  --motion-theme-switch: 0ms;
+  --motion-duration-base: 0ms;
+  --motion-duration-slow: 0ms;
+  --motion-duration-press: 0ms;
+  --motion-duration-hover: 0ms;
+  --motion-duration-entrance: 0ms;
+  --press-scale: 1;
+  --overlay-offset: 0px;
+  --overlay-blur: 0px;
+}

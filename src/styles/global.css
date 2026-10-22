@@ -1,0 +1,3826 @@
+/* ============================================================================
+ * Tailwind v4 入口
+ * 换掉的是 v3 那三条 @tailwind base/components/utilities 指令。
+ *
+ * source(none) 是必需的，不是洁癖：v4 默认自动扫描整个仓库，而本仓库里有
+ *   design/prototype.html（交付方原型，几百个我们并不实现的类名）
+ *   extension/popup.html（浏览器扩展自己的 popup，与本应用样式无关）
+ * 两份真实 HTML 会被扫进产物，静默撑大 CSS 体积并把类表搅浑。
+ * 所以关掉自动扫描，只登记真正上屏的两个窗口入口 + src。
+ * ========================================================================== */
+@import "tailwindcss" source(none);
+/* @source 的路径是相对**本 CSS 文件所在目录**（src/styles/）解析的，不是仓库根。
+ * 写成 "../src/**" 会解析成 src/src/**，一条都匹配不上——Tailwind 不报错，只是生成 0 条工具类，
+ * 界面静默退回继承色。产物里 utilities 层是否为空，由 globalCssEquivalence.test.ts 守着。 */
+@source "../../index.html";
+@source "../../launcher.html";
+@source "../**/*.ts";
+@source "../**/*.tsx";
+
+/* ============================================================================
+ * 令牌桥（作者令牌 → 工具名）
+ *
+ * 为什么作者令牌住在 --t-* 而不是 --color-*：v4 的 @theme 用 --color-<name> 这个键名
+ * 生成颜色工具（bg-primary ⇔ --color-primary），而换皮靠 [data-theme] 块重定义变量。
+ * 两边同名就变成"谁后写谁赢"的优先级之争，且 @theme 里那份静态值会压不住主题块。
+ *
+ * 全部走 @theme inline：它不向 :root 落声明，只把右侧文本原样写进生成的工具里。
+ * 于是 bg-primary 展开成 `background-color: var(--t-primary)`——tokens.css 的四套
+ * [data-theme] 块仍是唯一真源，透明度修饰符 bg-primary/20 也才跟着当前主题走。
+ * 右侧与左侧同名的那几组（--radius-*、--font-*）能自指，正是因为 inline 不产声明。
+ * ========================================================================== */
+@theme inline {
+  /* 颜色：与 v3 的 tailwind.config.colors 一一对应，工具名一个没改 */
+  --color-bg: var(--t-bg);
+  --color-surface: var(--t-surface);
+  --color-elevated: var(--t-surface-elevated);
+  --color-sunken: var(--t-surface-sunken);
+  --color-ink: var(--t-text);
+  --color-ink-body: var(--t-text-body);
+  --color-ink-muted: var(--t-text-muted);
+  --color-ink-inverse: var(--t-text-inverse);
+  --color-line: var(--t-border);
+  --color-line-strong: var(--t-border-strong);
+  --color-primary: var(--t-primary);
+  --color-primary-hover: var(--t-primary-hover);
+  --color-accent: var(--t-accent);
+  --color-success: var(--t-success);
+  --color-warning: var(--t-warning);
+  --color-danger: var(--t-danger);
+
+  /* 圆角：档位数值仍以 tokens.css 为准。这里必须逐档桥过来——v4 自己的
+   * --radius-sm 默认是 0.25rem(4px)，而本项目从 v3 起就把它钉成 8px；
+   * 不桥这一档，15 处 rounded-sm 会静默缩一号。 */
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-full: var(--radius-full);
+
+  /* 字族：不引任何 Web 字体，三族都是系统栈（内网离线装不了 Google Fonts） */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-display: var(--font-display);
+
+  /* shadcn/ui 的词表：只留产物里真的被引用到的那一枚（--color-input，供 border-input 用）。
+   * 其余原先照抄来的 26 枚（background、foreground、card、popover、primary、primary-foreground、
+   * secondary、muted、accent、destructive、ring、chart 1-5、sidebar 那一组）实测没有任何组件引用，
+   * 留在 :root 里就是"改了不会有任何视觉效果"的惰性等式，看着像真源其实是陷阱（审查 F20）。
+   * 以后真接哪个组件、真用到哪个词，再按那一枚补回来；themeContrast.test.ts 有守卫防惰性表复生。
+   * 全部由 --t-* 推导，零新增字面色：字面色只准住 tokens.css，那是 themeContrast 的头一条守卫。
+   * 另记一条本轮踩到的坑：注释里绝不能出现星号与斜杠相连的那两个字符，它会把注释提前闭合，
+   * 于是同一 @theme 块里写在后面的键被静默吞掉，产物少类而源码测试全绿。 */
+  --color-input: var(--input);
+  /* 悬停面：shadcn 的 accent 语义在我们的色表里对应"行悬停"那一档，
+   * 而 --color-accent 已被界面占用成强调色（= primary-hover），两者不能混用，
+   * 所以浮层/hover 面走这个独立工具名。 */
+  --color-row-hover: var(--row-hover);
+}
+
+/* shadcn 别名在本项目只剩这一枚，因为只有 border-input 这个 utility 真的被生成并被用到
+ * （ui/checkbox.tsx、ui/radio-group.tsx）。住在 :root 是因为 [data-theme] 只改 --t-*，
+ * 别名靠 var 链自动跟随；新增一枚就必须同时被某个 utility 真引用，
+ * 否则由 themeContrast.test.ts 的"别名不许惰性存在"那条挡下来。 */
+:root {
+  --input: var(--t-border-strong);
+}
+
+/* 只写宽度不写颜色的 border（本项目有一处裸 border-b）的默认色。
+ * v4 把这个默认值从 v3 的 gray-200 换成了 currentColor，所以要在 base 层钉回边框令牌。
+ * 刻意放在 base 而不是下面的界面层：它必须能被 border-line / border-primary 这类工具覆盖，
+ * 进了高优先级层就会反过来吃掉工具类。themeContrast.test.ts 有一条守的就是这段。 */
+@layer base {
+  *,
+  ::before,
+  ::after,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--t-border);
+  }
+}
+
+/* ============================================================================
+ * 界面层（下面这一整段是原 global.css 的全部规则，一条未改、顺序未动）
+ *
+ * 为什么是自定义层 mda 而不是 @layer components：
+ * 重构前这 3000 行是**不带层**且排在 @tailwind utilities 之后的，层叠语义是
+ * "未分层 > 所有层"，所以自定义类压得住同元素上的工具类。今天有 44 处正依赖这一点
+ * （20 处 .mono 的 font-size:0.94em 压住 text-xs/text-sm，24 处 h1/h2/h3 的
+ *  line-height 压住 text-lg/text-sm，另有 .overlay-panel 的 outline）。
+ * 放进 @layer components 会让这 44 处全部反转到工具类那一边——标题行高、等宽数字
+ * 字号都会变，而布局必须一致是硬约束。
+ * mda 在文件里第一次出现于 utilities 之后，按 CSS 层的规则就被追加到层序末尾，
+ * 优先级高于 @layer utilities，等价于"未分层且写在后面"。层内仍按选择器特异度与
+ * 源码顺序决胜负，与今天完全同构。
+ * ========================================================================== */
+@layer mda {
+/* 这里的每一个颜色都走令牌：字面色值会被 themeContrast.test.ts 挡下来（需求 line 246
+ * 「不得在每个组件中硬编码颜色」）。层次、动效、氛围光全部来自 tokens.css 的深度层，
+ * 所以换那四套界面风格、开「减少动态效果」这两件事都不需要在这里分支。
+ * S 轮起主题只剩四套自洽风格（玻璃/纯白/暗夜/霓虹），明暗身份由各套自己携带，
+ * 「明暗模式」「玻璃强度」那两整轴已经不在令牌层里，这里也就没有它们的分支。 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root,
+#launcher-root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--t-bg);
+  color: var(--t-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------- 排版层
+ * 不引网络字体：内网离线装机拿不到 Google Fonts，白屏比不好看更糟。
+ * 现有系统栈上做三件小事：标题收紧字距、数字用等宽数字（表格与统计条才不会跳）、
+ * 长句正文限宽。字族本身不动。 */
+h1,
+h2,
+h3 {
+  letter-spacing: -0.011em;
+  line-height: 1.3;
+  margin: 0;
+}
+
+.num,
+.table,
+.badge {
+  font-variant-numeric: tabular-nums;
+}
+
+.lead {
+  max-width: 68ch;
+}
+
+/* ---------------------------------------------------------------- 滚动条 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--t-border-strong) transparent;
+}
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--t-border-strong);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--t-text-muted);
+}
+
+/* ---------------------------------------------------------------- 焦点可见
+ * 2px 实心轮廓 + 外移，保证在任何面上都看得见（需求 §7「焦点可见」）。
+ * 需要轮廓的地方绝不只靠背景色变化表达状态。 */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ---------------------------------------------------------------- 面与层次
+ * 阴影表达层级、边框表达结构：越高的面阴影越散越深，边框只用来划边界。
+ * 顶部 1px 内高光（--glow-inset，原型那一档）是深色主题里"面"与"底"的主要分界，
+ * 比把边框加粗轻得多，也是这一层看起来不像贴上去的关键。 */
+.surface,
+/* 审查 F35：这里原先有第二条同名规则也写 box-shadow（--shadow-dropdown 那一档），
+ * 于是这一条的 --shadow-sm 永远不生效——同一元素两条同属性声明，赢的是书写顺序靠后的那条。
+ * 现在只删掉那条被覆盖的声明，两块各管各的属性：几何与阴影与之前逐像素相同。 */
+.surface-elevated {
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-md);
+}
+.surface {
+  background: var(--t-surface);
+}
+.surface-elevated {
+  background: var(--t-surface-elevated);
+  box-shadow:
+    var(--glow-inset),
+    var(--shadow-dropdown);
+}
+
+/* 磨砂面：S 轮起不再有"玻璃强度"这一轴，四套主题各自带 --blur（minimal 是 blur(0px)）。
+ * 所以这条规则对四套都成立，不需要 [data-glass] 分支：纯白那套算出来的模糊是零，等于没有。
+ * 只用 --blur-overlay（浮层档 8px）而不是 --blur（氛围档 32~40px）：模态是盖在内容上的一小块面，
+ * 按原型的 40px 模糊会把整页糊成一片色块，读到的是模糊本身而不是内容。 */
+.surface-glass {
+  backdrop-filter: var(--blur-overlay);
+  -webkit-backdrop-filter: var(--blur-overlay);
+}
+
+/* ================================================================ 壳层（原型 .app-container）
+ * 窗口 = 一块满幅的玻璃容器：内容与窗口边缘齐平，外圈不留白、容器不带圆角。
+ * 原型那版是"窗口里嵌一块 32px 圆角的玻璃，外圈留 24px 让光斑从圆角外面透进来"，
+ * 交付方 2026-10-18 看过真机图后要求撤掉那圈留白——留白与圆角是一件事的两面（圆角只为
+ * 让那块玻璃看着像浮在光斑上），所以两样一起撤；光斑层 `.bg-blobs` 保留，它现在是
+ * 玻璃面**背后**的底色，透过 `backdrop-filter` 仍然看得见，只是不再从边缘透出来。
+ * 三层从外到内：光斑（fixed，z-index -1）→ 容器（面 + 模糊）→ 顶栏 + 内容列。
+ *
+ * 这一层里的数值口径：颜色与透明度逐字照抄原型，只有三件事换成令牌或改掉——
+ *  1) 时长：原型写 0.2s / 0.3s / 0.6s，这里分别取 --motion-duration-base(180ms) /
+ *     --motion-duration-slow(260ms) / --motion-theme-switch(600ms)。差 20~40ms，
+ *     但换来「减少动态效果」能一刀关掉整层（tokens.css 里那一档全部归零）。
+ *  2) 圆角：999/20/16px 走 --radius-full/-lg/-md；原型另有的 14px（系统列表行）
+ *     和 10px（菜单行）令牌表里没有对应档，照原样写数字，不折算成 12 或 8——那一档的
+ *     "没那么圆"是原型手感的一部分。容器那一档（原型 32px）见上面那段，已撤。
+ *  3) 宽度：原型把容器限死在 1400px 内居中，宽窗口下两侧就会出现第二条留白带；
+ *     满幅之后这枚上限一并删掉，行长由内容列自己的 --content-max-width 管。
+ * 另外原型的过渡写 transition: all，本仓库的规矩是只列具体属性（见下面 .btn 那段），
+ * 这里全部照规矩列出；观感差别是颜色也会跟着补间，其余一致。 */
+#root {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+}
+.app-root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+.bg-blobs {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+}
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  /* 原型这一档是 80px，比主题里任何一档都大；它是氛围光斑的扩散量，不是界面模糊，
+   * 没有对应令牌，照字面写。 */
+  filter: blur(80px);
+  transition: background var(--motion-theme-switch) ease;
+}
+.blob-1 {
+  top: -10%;
+  left: -10%;
+  width: 60vw;
+  height: 60vh;
+  background: var(--blob-1);
+}
+.blob-2 {
+  right: -10%;
+  bottom: -10%;
+  width: 50vw;
+  height: 50vh;
+  background: var(--blob-2);
+}
+.blob-3 {
+  top: 40%;
+  left: 30%;
+  width: 40vw;
+  height: 40vh;
+  background: var(--blob-3);
+}
+@keyframes float1 {
+  100% {
+    transform: translate(10%, 10%) scale(1.1);
+  }
+}
+@keyframes float2 {
+  100% {
+    transform: translate(-10%, -10%) scale(1.2);
+  }
+}
+@keyframes float3 {
+  100% {
+    transform: translate(5%, -15%) scale(0.9);
+  }
+}
+/* 20s 的漂移只有玻璃与赛博那两套看得见（另两套光斑是 transparent），
+ * 但规则不分支：动画挂在空盒子上不花钱，分支反而会让两套主题走不同代码路径。 */
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-reduce-motion='true']) .blob-1 {
+    animation: float1 20s infinite alternate;
+  }
+  :root:not([data-reduce-motion='true']) .blob-2 {
+    animation: float2 20s infinite alternate;
+  }
+  :root:not([data-reduce-motion='true']) .blob-3 {
+    animation: float3 20s infinite alternate;
+  }
+}
+
+.app-container {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  /* macOS 上红绿灯浮在这一层上面：让玻璃铺到窗口顶边（含那 28px），留白加在容器内侧。
+   * 加在 padding 而不是顶栏高度上，是因为顶栏那 28px 也得是同一块玻璃——从 #root 让位会把
+   * 光斑留在模糊面之外，y=28 那道接缝和原来那条灰色标题栏一样割裂。
+   * 结果：顶栏与下面每一行的绝对位置和换皮前逐像素相同，只是上面那条带子换成了玻璃。 */
+  padding-top: var(--titlebar-inset);
+  background: var(--t-surface);
+  box-shadow: var(--glow-inset);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  transition: background-color var(--motion-theme-switch) ease;
+}
+
+/* ---------------------------------------------------------------- 顶栏（原型 .top-navbar，80px 单行） */
+.top-navbar {
+  position: relative;
+  z-index: 100;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-4);
+  height: var(--topbar-height);
+  padding: 0 var(--spacing-5);
+}
+.nav-left {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  /* 闪电素材自身在方框左右各留了 26% 的透明边（bolt 只占 viewBox 宽度的 47%），
+   * 所以这里的 gap 只补到"标识↔名称"约 10px 的视觉间距，不是从图形边缘算起。 */
+  gap: 2px;
+}
+/* 品牌标记：原型的 logo 带一枚绿色投影，那个色相不属于任何一套主题（四套的 status-green
+ * 在 obsidian/cyber 里是不同值），所以这里只用当前主题的主色投影，不照抄字面色。 */
+.brand-mark {
+  flex-shrink: 0;
+  filter: drop-shadow(0 4px 12px var(--t-primary-glow));
+  transition: transform var(--motion-duration-slow) var(--motion-ease);
+}
+.brand-mark:hover {
+  transform: scale(1.1);
+}
+/* 品牌名是渐变字（前景当墨、底色当纸），原型靠 background-clip:text 实现。
+ * 这一枚渐变只由 --t-text 与 --t-text-body 两档文字色构成，任何主题下
+ * 两端都是它自己那两档，所以不需要为主题分支。 */
+.brand-text {
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  white-space: nowrap;
+  background: linear-gradient(135deg, var(--t-text) 0%, var(--t-text-body) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.nav-center {
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  padding: 0 var(--spacing-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav-center::-webkit-scrollbar {
+  display: none;
+}
+.nav-capsule {
+  display: flex;
+  gap: var(--spacing-1);
+  padding: var(--spacing-2);
+  border: 1px solid var(--t-border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--t-surface-sunken);
+  box-shadow: var(--glow-inset);
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-theme-switch) ease,
+    border-color var(--motion-theme-switch) ease;
+}
+/* 胶囊里的导航项：原型用 div + onclick，这里换成真 <button>（键盘路径与可及名都靠它），
+ * 所以要把按钮的默认外观摘干净：无边框、无背景、继承字号与字族。
+ * 选中态原型写 .active，我们写 aria-current="page"（同一件事的语义版），两条选择器都留着：
+ * 前者给原型稿对照，后者是实际生效的那条。 */
+.nav-item {
+  padding: 10px 18px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--t-text-body);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color var(--motion-duration-slow) var(--motion-ease),
+    background-color var(--motion-duration-slow) var(--motion-ease);
+}
+.nav-item:hover {
+  background: var(--row-hover);
+  color: var(--t-text);
+}
+.nav-item.active,
+.nav-item[aria-current='page'] {
+  background: var(--t-surface-elevated);
+  color: var(--t-text);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  box-shadow: var(--shadow-sm);
+}
+
+.nav-right {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-3);
+}
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-full);
+  background: var(--t-surface-elevated);
+  color: var(--t-text-body);
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-slow) var(--motion-ease),
+    background-color var(--motion-duration-slow) var(--motion-ease),
+    box-shadow var(--motion-duration-slow) var(--motion-ease),
+    transform var(--motion-duration-press) var(--motion-ease-out);
+}
+.icon-btn:hover {
+  background: var(--row-hover);
+  color: var(--t-text);
+  box-shadow: var(--shadow-sm);
+}
+.icon-btn:active {
+  transform: scale(var(--press-scale));
+}
+.icon-btn svg {
+  width: 20px;
+  height: 20px;
+  /* 原型 `.icon-btn svg { stroke-width: 1.8 }`。lucide 把 stroke-width 写成 <svg> 上的
+   * 呈现属性（默认 2），CSS 规则压得过它，所以这里改这一档就够了，不动 Icon 组件的默认值。 */
+  stroke-width: 1.8;
+}
+.icon-btn.is-active {
+  background: var(--t-surface-elevated);
+  color: var(--t-text);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---------------------------------------------------------------- 锚定下拉（原型 .dropdown-*）
+ * 原型用 opacity+visibility 常开常关同一块 DOM；这里的 Popover 是展开才挂载，
+ * 所以那一档隐藏态不需要，换成入场动画（出场仍不补间，与 Modal/Drawer 同一口径：
+ * 关闭必须"立刻关掉"）。宽度、圆角、内边距按原型。 */
+.dropdown-menu {
+  width: 200px;
+  /* 主题菜单 4 行、设置 2 行、使用者「名字 + 3 行」，矮窗口（minHeight 700）里也得能滚，不能顶出屏。
+   * 减 --titlebar-inset 是因为 macOS 上 100vh 是整扇窗（含红绿灯那条带），顶栏从它下方才开始。 */
+  max-height: calc(100vh - var(--titlebar-inset) - var(--topbar-height) - var(--spacing-6));
+  padding: var(--spacing-2);
+  overflow-y: auto;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-md);
+  background: var(--t-surface-elevated);
+  box-shadow: var(--shadow-dropdown);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-reduce-motion='true']) .dropdown-menu {
+    animation: dropdown-in var(--motion-duration-slow) var(--motion-ease);
+  }
+}
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* 菜单行同样是 div → button：原型靠 div 的 cursor:pointer 装成按钮，那套键盘走不通。
+ * display 用 flex 而不是原型的 inline-flex，是为了让按钮在 200px 的菜单里横向填满。 */
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--t-text-body);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color var(--motion-duration-base) var(--motion-ease),
+    background-color var(--motion-duration-base) var(--motion-ease);
+}
+/* 高亮态补 [data-highlighted]：Radix 把键盘选择位表达在这个属性上，
+ * 只认 :hover 的话键盘走菜单时全程没有任何视觉反馈。两者共用同一档底色，
+ * 鼠标与键盘看到的是同一个状态（手写版是 focus() 与 :hover 两套机制，会打架）。 */
+.dropdown-item:hover,
+.dropdown-item[data-highlighted] {
+  background: var(--row-hover);
+  color: var(--t-text);
+}
+.dropdown-item svg {
+  width: 16px;
+  height: 16px;
+  color: inherit;
+  opacity: 0.7;
+  transition:
+    color var(--motion-duration-base) var(--motion-ease),
+    opacity var(--motion-duration-base) var(--motion-ease);
+}
+.dropdown-item:hover svg {
+  color: var(--t-text);
+  opacity: 1;
+}
+/* 退出登录那一行：文字与图形都用危险色。危险色压在 --row-hover 上不在对比度契约表里
+ * （契约表验的是 --t-surface / --t-bg 那几档底），但危险色在浮层面上的那一格
+ * 已经按 4.5:1 验过，悬停底只是 8% 的轻染，压下去的变化在一档以内。 */
+.dropdown-item.danger {
+  color: var(--t-danger);
+}
+.dropdown-item.danger svg {
+  color: var(--t-danger);
+  opacity: 0.9;
+}
+.dropdown-item.danger:hover {
+  background: color-mix(in srgb, var(--t-danger) 8%, transparent);
+  color: var(--t-danger);
+}
+.dropdown-divider {
+  flex: 0 0 1px;
+  height: 1px;
+  margin: var(--spacing-2) var(--spacing-3);
+  background: var(--t-divider);
+}
+
+/* 主题菜单：原型给这一张单独 210px（其余两张下拉 200px）。 */
+.theme-panel {
+  width: 210px;
+}
+.theme-panel-label {
+  padding: 4px 12px 8px;
+  color: var(--t-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.theme-option {
+  justify-content: space-between;
+}
+.theme-option-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+/* 四枚名片的颜色写在 tokens.css 的 --preview-*（与主题无关，是"那一套长什么样"的名片），
+ * 这里只做形状与描边。 */
+.theme-preview {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-xs-outer);
+  /* 原型这里是一条 0 2px 4px 的黑投影；字面色在本文件里是唯一一处，会顶掉
+   * "字面颜色只准出现在 tokens.css"那条守卫，所以取 --shadow-sm 那一档替代。 */
+  box-shadow: var(--shadow-sm);
+}
+.theme-preview[data-preview='glass'] {
+  background: var(--preview-glass);
+}
+.theme-preview[data-preview='minimal'] {
+  background: var(--preview-minimal);
+}
+.theme-preview[data-preview='obsidian'] {
+  background: var(--preview-obsidian);
+}
+.theme-preview[data-preview='cyber'] {
+  background: var(--preview-cyber);
+}
+/* 勾形：原型用 opacity 0/1 常驻占位，这里勾是选中才渲染进 DOM，所以颜色与尺寸照抄、
+ * 不做透明度分支。选中那一行本身另有重量（字重 + 凹面，见下面 aria-checked）。 */
+.check-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--t-primary);
+}
+.theme-option[aria-checked='true'] {
+  background: var(--t-surface-sunken);
+  font-weight: 600;
+}
+
+/* 当前使用者那颗：交付方 10-18 二批把昵称从胶囊里撤了（"右侧只显示用户头像，名称显示到下拉菜单上"），
+ * 所以胶囊只剩头像 + 一支箭头，原型的 `padding: 4px 10px 4px 4px` 跟着收成左右对称——
+ * 那 10px 是给文字留的右缓冲，现在没有文字。箭头展开时转 180° 是原型给的，
+ * 挂到 data-open 上（Popover 已经在触发钮上写了这个属性）。 */
+.user-profile {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-full);
+  background: var(--t-surface-elevated);
+  color: var(--t-text-body);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-slow) var(--motion-ease),
+    box-shadow var(--motion-duration-slow) var(--motion-ease);
+}
+.user-profile:hover {
+  background: var(--row-hover);
+}
+.user-profile svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--t-text-muted);
+  transition: transform var(--motion-duration-slow) var(--motion-ease);
+}
+.user-profile[data-open] svg {
+  transform: rotate(180deg);
+}
+.user-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: var(--t-surface-sunken);
+  color: var(--t-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+/* 下拉第一行：当前使用者的名字。它是只读展示，不是菜单项（没有 role="menuitem"，
+ * 也不响应点击），所以与下面那几行的差别只有字重与颜色。设备名可能很长，截断而不是撑开菜单。 */
+.user-menu-name {
+  padding: 10px 12px;
+  overflow: hidden;
+  color: var(--t-text);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ---------------------------------------------------------------- 内容骨架（原型左右分栏）
+ * .main-content 是容器内那条滚动带，padding 按原型"上 24、左右 40、下 40"；
+ * .content-layout 把两栏整体收在 --content-max-width 并居中。
+ * 账号页返回的是左栏 + 右栏两个兄弟节点（Fragment），其余单栏页各自带一层 .page-panel，
+ * 两者在这一层里是同一档宽度行为：弹性填满、不许被内容撑破（min-width:0）。 */
+.main-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: var(--content-padding-top) var(--content-padding-x) var(--content-padding-x);
+  overflow: hidden;
+}
+.content-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  gap: var(--content-gap);
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+}
+.page-panel,
+.system-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--spacing-4);
+  min-width: 0;
+  min-height: 0;
+}
+.system-page-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--spacing-4);
+  min-height: 0;
+  padding-right: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 系统管理的左侧竖排导航：观感沿用顶栏胶囊（sunken 底、细边、内高光），
+ * 只把方向立起来，宽度收成 96px 的图标 + 文字列。 */
+.admin-shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  gap: var(--content-gap);
+  min-width: 0;
+}
+.admin-sidebar {
+  display: flex;
+  flex-direction: column;
+  align-self: flex-start;
+  flex-shrink: 0;
+  gap: var(--spacing-1);
+  width: 96px;
+  max-height: 100%;
+  padding: var(--spacing-2);
+  border: 1px solid var(--t-border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--t-surface-sunken);
+  box-shadow: var(--glow-inset);
+}
+.admin-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-2) 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--t-text-body);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color var(--motion-duration-slow) var(--motion-ease),
+    background-color var(--motion-duration-slow) var(--motion-ease);
+}
+.admin-nav-item:hover {
+  background: var(--row-hover);
+  color: var(--t-text);
+}
+.admin-nav-item[aria-current='page'] {
+  background: var(--t-surface-elevated);
+  color: var(--t-text);
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
+}
+.admin-nav-item svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.8;
+}
+
+/* 页头：标题与说明的重量取自原型 .right-title（22px/800 + 13px 次要），
+ * 因为顶栏换成胶囊之后不再承载页名，整屏唯一那枚 h1 回到各页自己头上。 */
+.page-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--spacing-4);
+  padding: 0 8px;
+}
+.page-heading {
+  min-width: 0;
+}
+.page-title {
+  margin-bottom: 4px;
+  color: var(--t-text);
+  font-size: 22px;
+  font-weight: 800;
+}
+.page-desc {
+  max-width: 72ch;
+  color: var(--t-text-muted);
+  font-size: 13px;
+}
+.page-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+/* --- 左栏：接入系统列表（原型 .left-panel 一整块） */
+.left-panel {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: var(--spacing-4);
+  width: var(--sidebar-width);
+  min-height: 0;
+}
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+}
+/* 原型给 .panel-title 的是 15px/700/标题色；本仓库另有一批 .panel 里的 h3 也叫 .panel-title
+ * （13px/600，见上面 .panel 那段）。两者不冲突：这一条只挂在 .panel-header 的直接子元素上，
+ * 具体度更高，抽屉与数据页那些 h3 仍走原来那一档。 */
+.panel-header > .panel-title {
+  color: var(--t-text);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-mini {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-full);
+  background: var(--t-surface-elevated);
+  color: var(--t-text-body);
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-base) var(--motion-ease),
+    background-color var(--motion-duration-base) var(--motion-ease),
+    box-shadow var(--motion-duration-base) var(--motion-ease),
+    transform var(--motion-duration-base) var(--motion-ease-out);
+}
+.btn-mini:hover {
+  background: var(--row-hover);
+  color: var(--t-text);
+  box-shadow: var(--shadow-sm);
+  transform: scale(1.05);
+}
+.btn-mini:active {
+  transform: scale(0.95);
+}
+.btn-mini svg {
+  width: 13px;
+  height: 13px;
+}
+
+.system-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  min-height: 0;
+  padding-right: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.system-list-empty {
+  margin: 0;
+  padding: var(--spacing-4) var(--spacing-2);
+  color: var(--t-text-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+/* 静置是透明底 + 透明描边（占位用，避免选中时因为描边出现而整体位移 2px）。
+ * 选中那一档原型给的是"实心浮层面 + 可见描边 + 近距投影"三件，与主色无关，
+ * 所以在四套主题里都读得出，不靠颜色单独表达。 */
+.system-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-base) var(--motion-ease),
+    border-color var(--motion-duration-base) var(--motion-ease),
+    box-shadow var(--motion-duration-base) var(--motion-ease);
+}
+.system-item:hover {
+  background: var(--row-hover);
+}
+.system-item.active {
+  border-color: var(--t-border);
+  background: var(--t-surface-elevated);
+  box-shadow:
+    var(--shadow-sm),
+    var(--glow-inset);
+}
+.sys-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--t-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface-sunken);
+  color: var(--t-text-muted);
+  font-size: 14px;
+  font-weight: 700;
+  transition:
+    background-color var(--motion-theme-switch) ease,
+    color var(--motion-theme-switch) ease,
+    box-shadow var(--motion-theme-switch) ease;
+}
+/* 选中行的首字符方块换成主色实心 + 反色字：这一对（primary 画在 text-inverse 上）
+ * 正是对比度契约里逐主题验过的那枚反相档，四套主题里 obsidian/cyber 是反的，
+ * 令牌自己带，所以这里不用分支。 */
+.system-item.active .sys-icon {
+  border-color: transparent;
+  background: var(--t-primary);
+  color: var(--t-text-inverse);
+  box-shadow: 0 2px 8px var(--t-primary-glow);
+}
+.sys-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.sys-name {
+  overflow: hidden;
+  color: var(--t-text);
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sys-meta {
+  overflow: hidden;
+  color: var(--t-text-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* --- 右栏：账号表格（原型 .right-panel 一整块） */
+.right-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.right-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--spacing-4);
+  margin-bottom: var(--spacing-5);
+  padding: 0 8px;
+}
+.right-title h2 {
+  margin-bottom: 4px;
+  color: var(--t-text);
+  font-size: 22px;
+  font-weight: 800;
+}
+.right-title p {
+  max-width: 72ch;
+  color: var(--t-text-muted);
+  font-size: 13px;
+}
+.right-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+/* 三颗圆形动作钮（打开默认 / 只看关注 / 添加账号）同一档 38px。前两颗原型是浅底、
+ * 第三颗是主色渐变实心——这一枚的渐变由 --t-primary 与 --t-primary-hover 两端构成，
+ * 不引入第二色相；字用 --t-text-inverse，正是契约表里"主色底 + 反白字"那一格。 */
+.filter-btn {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-full);
+  background: var(--t-surface-elevated);
+  color: var(--t-text-muted);
+  cursor: pointer;
+  transition:
+    color var(--motion-theme-switch) ease,
+    background-color var(--motion-theme-switch) ease,
+    border-color var(--motion-theme-switch) ease,
+    transform var(--motion-duration-base) var(--motion-ease-out);
+}
+.filter-btn:hover:not(:disabled) {
+  background: var(--row-hover);
+  color: var(--t-text);
+  transform: scale(1.05);
+}
+.filter-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+/* 禁用是"这个系统还没有默认账号"，不是"按钮坏了"：描边与底留在原档，只把图形压暗，
+ * 光标换成 not-allowed，title 里给的那句实话才有地方落。 */
+.filter-btn:disabled {
+  color: var(--t-text-muted);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.filter-btn svg {
+  width: 18px;
+  height: 18px;
+}
+.filter-btn.active-star {
+  border-color: var(--t-star);
+  background: color-mix(in srgb, var(--t-star) 10%, transparent);
+  color: var(--t-star);
+}
+.filter-btn.active-star svg {
+  fill: var(--t-star);
+  stroke: var(--t-star);
+}
+/* 删除是破坏性动作：平时与其它圆钮同档，只有悬停时把色相切到危险色。
+ * 底纹用同一枚 --t-danger 调淡，不引入第二套危险色。 */
+.filter-btn.is-danger:hover:not(:disabled) {
+  border-color: var(--t-danger);
+  background: color-mix(in srgb, var(--t-danger) 10%, transparent);
+  color: var(--t-danger);
+}
+
+/* 搜索盒：38px 的一颗圆钮 ⇄ 200px 的一条输入，靠 .active（组件里的 state）决定宽度，
+ * 输入本身摘掉焦点外环——容器已经有实色描边 + 3px 主色光晕了，再套一圈就成了两层框。 */
+.search-box-wrapper {
+  display: flex;
+  align-items: center;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-full);
+  background: var(--t-surface-elevated);
+  box-shadow: var(--shadow-sm);
+  transition:
+    width var(--motion-duration-slow) var(--motion-ease),
+    border-color var(--motion-duration-slow) var(--motion-ease),
+    box-shadow var(--motion-duration-slow) var(--motion-ease);
+}
+.search-box-wrapper.active {
+  width: 200px;
+  border-color: var(--t-primary);
+  box-shadow: 0 0 0 3px var(--t-primary-glow);
+  padding-right: 14px;
+}
+.btn-search-toggle {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--t-text-body);
+  cursor: pointer;
+  transition: color var(--motion-duration-base) var(--motion-ease);
+}
+.btn-search-toggle:hover {
+  color: var(--t-text);
+}
+.btn-search-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+.table-search-input {
+  width: 0;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--t-text);
+  font: inherit;
+  font-size: 13.5px;
+  opacity: 0;
+  transition:
+    width var(--motion-duration-slow) var(--motion-ease),
+    opacity var(--motion-duration-slow) var(--motion-ease);
+}
+.table-search-input::placeholder {
+  color: var(--t-text-muted);
+  opacity: 1;
+}
+.search-box-wrapper.active .table-search-input {
+  width: 100%;
+  opacity: 1;
+}
+.table-search-input:focus {
+  outline: none;
+}
+
+.btn-icon-primary {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, var(--t-primary) 0%, var(--t-primary-hover) 100%);
+  color: var(--t-text-inverse);
+  cursor: pointer;
+  box-shadow: var(--shadow-btn);
+  transition:
+    box-shadow var(--motion-duration-slow) var(--motion-ease),
+    transform var(--motion-duration-slow) var(--motion-ease),
+    filter var(--motion-duration-slow) var(--motion-ease);
+}
+.btn-icon-primary:hover:not(:disabled) {
+  box-shadow: 0 8px 20px -4px var(--t-primary-glow);
+  filter: brightness(1.1);
+  transform: translateY(-2px);
+}
+.btn-icon-primary:active:not(:disabled) {
+  transform: translateY(0) scale(var(--press-scale));
+}
+.btn-icon-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.btn-icon-primary svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* 表格：原型用 div + grid 排成表格，语义由 role 补（见 AccountsPage 的
+ * role="table/row/columnheader/rowgroup/cell"），所以这里既要有网格列宽也得有表格底。
+ * 列宽 2.5/1.5/1.5/1.2 只在这一处，表头与行必须同一条，否则整列错位。 */
+.data-table-wrapper {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--t-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--t-surface-sunken);
+  box-shadow:
+    var(--shadow-sm),
+    var(--glow-inset);
+}
+.data-table {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.table-header,
+.table-row {
+  display: grid;
+  /* 原型是 2.5fr 1.5fr 1.5fr 1.2fr，那一版操作列只有三颗钮（28×3+8×2=100px）。
+   * 行内加「编辑」后四颗要 136px；2026-10-21 操作列再补复制用户名/密码两颗，
+   * 满编七颗需要 28×7+8×6=244px：1.2fr 在窗口最小宽 960px 时只有约 100px，连三颗都摆不下
+   * （表体滚动条还要再吃掉约 15px）。这里继续从名称/状态两栏让份数：
+   * 默认 1280px 窗口下操作列约 345px，七颗钮和一行时间都放得下；
+   * 窗口收到 1024px 以下时操作列不足 244px，由 .action-icon-btn 后面那条窄窗规则把钮收小，
+   * 而不是让七颗钮压进相邻单元格。 */
+  grid-template-columns: 1.6fr 0.8fr 1.65fr 2.75fr;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--t-divider);
+}
+.table-header {
+  flex-shrink: 0;
+  color: var(--t-text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  /* 四栏标签都居中（交付方 2026-10-21），表体四栏在同一轮里跟着居中（见 .table-cell），
+   * 两边落在各自列宽的同一条中线上。 */
+  text-align: center;
+}
+.table-body-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.table-row {
+  transition: background-color var(--motion-duration-base) var(--motion-ease);
+}
+.table-row:last-child {
+  border-bottom: none;
+}
+.table-row:hover {
+  background: var(--row-hover);
+}
+.table-cell {
+  display: flex;
+  align-items: center;
+  /* 表体四栏与表头同一条中线（交付方 2026-10-21）：名称、状态、时间、操作全部居中 */
+  justify-content: center;
+  min-width: 0;
+  color: var(--t-text-body);
+  font-size: 14px;
+}
+.table-cell.title {
+  color: var(--t-text);
+  font-weight: 600;
+}
+/* 账号名称：双击复制用户名（交付方 2026-10-21，单击不再拉抽屉）。双击默认会顺手选中这一小段文字，
+ * 选中高亮跟着复制一起闪一下，看起来像"只选中、没复制"，所以这里不让它被选中。 */
+.cell-title-text {
+  user-select: none;
+}
+
+/* 状态徽标：原型的绿药丸 + 前导点。底色用 --t-success-soft（就是原型 --status-green-bg
+ * 那一档），文字用 --t-success——这一对在 --t-surface-sunken 上按 4.5:1 验过。
+ * .is-disabled 换成次要文字色那一档：停用与启用不能只靠"绿 / 灰"分，点与边框一起变。 */
+.badge-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--t-success);
+  border-radius: var(--radius-full);
+  background: var(--t-success-soft);
+  color: var(--t-success);
+  font-size: 12px;
+  font-weight: 600;
+}
+.status-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--t-success);
+  box-shadow: 0 0 6px var(--t-success);
+}
+.badge-status.is-disabled {
+  border-color: var(--t-text-muted);
+  background: var(--t-surface-sunken);
+  color: var(--t-text-muted);
+}
+.badge-status.is-disabled .status-dot {
+  background: var(--t-text-muted);
+  box-shadow: none;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  /* 跟着整栏居中，不再单独靠右：操作列的表头也居中，两边要落在同一条中线上 */
+  justify-content: center;
+  gap: var(--spacing-2);
+  width: 100%;
+}
+.action-icon-btn {
+  display: grid;
+  place-items: center;
+  /* 多颗钮并排时不许被列宽挤扁：宁可让列宽兜住，也不能出现"图标看着大小不一" */
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--t-text-muted);
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-base) var(--motion-ease),
+    background-color var(--motion-duration-base) var(--motion-ease),
+    border-color var(--motion-duration-base) var(--motion-ease),
+    transform var(--motion-duration-press) var(--motion-ease-out);
+}
+.action-icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.action-icon-btn:hover:not(:disabled) {
+  border-color: var(--t-border-subtle);
+  background: var(--t-surface-elevated);
+  color: var(--t-text);
+}
+.action-icon-btn:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+}
+.action-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* 默认账号那颗：主色实心勾 + 轻底。这一档是"当前生效"，与关注那颗（星色）分得很开。 */
+.action-icon-btn.active-default {
+  background: var(--row-hover);
+  color: var(--t-primary);
+}
+.action-icon-btn.active-default svg {
+  fill: var(--t-primary);
+  stroke: var(--t-primary);
+}
+.action-icon-btn.active-star {
+  color: var(--t-star);
+}
+.action-icon-btn.active-star svg {
+  fill: var(--t-star);
+  stroke: var(--t-star);
+}
+/* 行内删除同理：只在悬停时切危险色，表里不会多出一排红图标喧宾夺主。 */
+.action-icon-btn.is-danger:hover:not(:disabled) {
+  border-color: var(--t-danger);
+  background: color-mix(in srgb, var(--t-danger) 10%, transparent);
+  color: var(--t-danger);
+}
+/* 七颗 28px 钮要 244px；窗口收到 1024px 时操作列只剩约 242px，再窄就更少。
+ * 这一档把行内钮收成 24px（图标同步 14px）、间距 4px：7×24+6×4=192px，不压进相邻单元格。
+ * 24px 正好是 WCAG 2.2 的目标尺寸下限，不回退成"点不准"。 */
+@media (max-width: 1024px) {
+  .table-actions {
+    gap: 4px;
+  }
+  .action-icon-btn {
+    width: 24px;
+    height: 24px;
+  }
+  .action-icon-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.empty-search-tip {
+  display: none;
+  padding: var(--spacing-7);
+  color: var(--t-text-muted);
+  font-size: 14px;
+  text-align: center;
+}
+.empty-search-tip.show {
+  display: block;
+}
+
+.table-pagination {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-top: 1px solid var(--t-divider);
+  background: var(--t-surface-sunken);
+  color: var(--t-text-muted);
+  font-size: 13px;
+}
+.page-info {
+  font-weight: 500;
+}
+.page-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.page-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-xs-outer);
+  background: transparent;
+  color: var(--t-text-body);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-base) var(--motion-ease),
+    background-color var(--motion-duration-base) var(--motion-ease);
+}
+.page-btn:hover:not(:disabled) {
+  background: var(--row-hover);
+  color: var(--t-text);
+}
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* 页码那颗也是 button（原型是 div），当前页反相：主色底 + 反白字，与 .sys-icon 选中档同源。 */
+.page-num {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs-outer);
+  background: transparent;
+  color: var(--t-text-body);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-base) var(--motion-ease),
+    background-color var(--motion-duration-base) var(--motion-ease);
+}
+.page-num:hover:not(.active) {
+  background: var(--row-hover);
+  color: var(--t-text);
+}
+.page-num.active,
+.page-num[aria-current='page'] {
+  background: var(--t-primary);
+  color: var(--t-text-inverse);
+  font-weight: 600;
+  box-shadow: 0 2px 8px var(--t-primary-glow);
+}
+/* 页脚里的「每页条数」：原来站在页顶带标签的字段，现在缩进分页条与页钮同一排。
+ * 几何跟着 .page-btn（4px 内边距 + 12.5px 字），方框仍由 .select 提供，这里只把它收窄：
+ * 特异度 (0,2,0) 压得住 .select 的 width:100% 与 padding，不靠源码顺序碰运气。 */
+.page-controls .page-size-select {
+  width: auto;
+  /* Select 的浮层宽度跟着触发钮走（.select-content），85px 时"20 条/页"会在菜单里折行；
+   * 108px 给菜单留出 84px 的文字槽，"100 条/页"也放得下。 */
+  min-width: 108px;
+  padding: 4px 26px 4px 10px;
+  /* 边框同 .page-btn 那一档（--t-border，不是 .select 默认的 --t-border-strong），
+   * 三种边框色并排时按这个顺序读；聚焦态由后面的 .select:focus 抬回主色。 */
+  border-color: var(--t-border);
+  border-radius: var(--radius-xs-outer);
+  background: transparent;
+  color: var(--t-text-body);
+  font-size: 12.5px;
+  box-shadow: none;
+}
+.page-controls .page-size-select:hover:not([data-disabled]) {
+  background: var(--row-hover);
+  color: var(--t-text);
+}
+
+/* 分区块：内容里的每个"区"用同一套外壳，间距由外而内递减 */
+.panel {
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-outer);
+  background: var(--t-surface);
+  box-shadow:
+    var(--glow-inset),
+    var(--shadow-sm);
+}
+.panel-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.panel-body {
+  padding: var(--spacing-4);
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+.main-panel {
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-outer);
+  background: var(--t-surface);
+  box-shadow:
+    var(--glow-inset),
+    var(--shadow-sm);
+  padding: var(--spacing-4);
+}
+/* 面板内的说明条：比正文低一档的沉面，靠"陷下去"而不是靠颜色表达它是旁注 */
+.panel-notice {
+  margin: 0 0 var(--spacing-3);
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface-sunken);
+  color: var(--t-text-muted);
+  font-size: 12px;
+}
+.panel-notice > * {
+  margin: 0;
+}
+/* 取数缺口这类"界面诚实"句：只在真的溢出时出现，字号再低一档、不与表格抢注意力 */
+.list-note {
+  margin: var(--spacing-3) 0 0;
+  color: var(--t-text-muted);
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- 按钮
+ * 按压是这一层唯一的"物理感"：scale(0.96) / 150ms ease-out，禁用态永远不缩放。
+ * 只列具体属性，绝不写 transition-property: all（那会让颜色也跟着走，看起来糊）。 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-btn);
+  border: 1px solid var(--t-border-strong);
+  background: var(--t-surface-elevated);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  box-shadow:
+    var(--glow-inset),
+    var(--shadow-sm);
+  transition:
+    background-color var(--motion-duration-hover) var(--motion-ease),
+    border-color var(--motion-duration-hover) var(--motion-ease),
+    box-shadow var(--motion-duration-hover) var(--motion-ease),
+    transform var(--motion-duration-press) var(--motion-ease-out);
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--t-primary);
+  background: var(--row-hover);
+}
+.btn:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+  box-shadow: inset 0 1px 2px var(--shadow-inset, transparent);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.btn-primary {
+  background: var(--t-primary);
+  border-color: var(--t-primary);
+  color: var(--t-text-inverse);
+  /* 主按钮去阴影：暖纸面上的一整块实心色本身就够重了，再叠投影会变成"贴上去的按钮"。
+   * 按压反馈来自 .btn:active 的 scale 与内投影，不依赖这一层。 */
+  box-shadow: none;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--t-primary-hover);
+  border-color: var(--t-primary-hover);
+}
+.btn-danger {
+  color: var(--t-danger);
+  border-color: var(--t-danger);
+}
+/* 弱化按钮：没有底、没有阴影，只有一层极淡的面；点击区仍然完整 */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-btn);
+  background: transparent;
+  color: var(--t-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-hover) var(--motion-ease),
+    border-color var(--motion-duration-hover) var(--motion-ease),
+    transform var(--motion-duration-press) var(--motion-ease-out);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--nav-hover);
+  border-color: var(--t-border);
+}
+.btn-ghost:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+}
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 标签式筛选（导入导出那一组 tablist）：选中态直接翻成实心主色胶囊。
+ * 之前写的是"浅色面上用主色当文字"，实测几套偏亮的主色落在 --nav-active
+ * 这种轻染底上只有 3.3:1 左右，够不上正文 4.5:1；而 --t-text-inverse 压在
+ * --t-primary 上是 themeContrast.test.ts 逐主题验过的对子（四套里 obsidian/cyber
+ * 是反的，主色本身就亮、反白字是墨，令牌自己带方向），
+ * 所以选中态改走"底色翻转"，反馈更强且可被契约校验。 */
+.chip-toggle {
+  padding: 4px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-full);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition:
+    background-color var(--motion-duration-hover) var(--motion-ease),
+    border-color var(--motion-duration-hover) var(--motion-ease),
+    color var(--motion-duration-hover) var(--motion-ease),
+    transform var(--motion-duration-press) var(--motion-ease-out);
+}
+.chip-toggle:hover:not([aria-selected='true']) {
+  border-color: var(--t-border-strong);
+  background: var(--row-hover);
+}
+.chip-toggle:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+}
+.chip-toggle[aria-selected='true'] {
+  background: var(--t-primary);
+  border-color: var(--t-primary);
+  color: var(--t-text-inverse);
+  font-weight: 600;
+  box-shadow: none;
+}
+.chip-toggle[aria-selected='true']:hover:not(:disabled) {
+  background: var(--t-primary-hover);
+  border-color: var(--t-primary-hover);
+}
+
+/* 页码条的当前页与上面的选中档走同一套判定：底色翻转，不拿主色当文字。
+ * SideMenu 也用了 aria-current='page'，所以这条必须锁在 .num 上，不能裸写属性选择器。 */
+.num[aria-current='page'] {
+  background: var(--t-primary);
+  border-color: var(--t-primary);
+  color: var(--t-text-inverse);
+  font-weight: 600;
+}
+.num[aria-current='page']:hover {
+  background: var(--t-primary-hover);
+  border-color: var(--t-primary-hover);
+}
+
+/* 原生 checkbox / radio 那两档（15px + accent-color）随控件一起撤了：
+ * 这两处现在是 Radix 自绘的 button，尺寸写在组件里（ui/checkbox.tsx、ui/radio-group.tsx），
+ * 颜色取自 border-input / bg-primary 两枚令牌桥。留着这两条规则就是给一个不存在的元素配样式。 */
+
+/* ---------------------------------------------------------------- 表单
+ * 全站字段只有一个样子：控件那一行（`.field-line`）底下一条静置线，聚焦时 ::after 从左走满，
+ * 标签同时从 muted 抬到正文色。这一档原先只活在认证页（`.auth-panel .field` 那七条），
+ * 2026-10-20 交付方点名把它提到基础层，业务页面的字段随之换过来。
+ * 落点为什么是 `.field-line` 而不是整块 `.field`：字段下面还挂着 hint 与报错那两行小字，
+ * 线画在整块底部就会被它们顶开，离输入的内容太远（交付方原话"距离有点大了,看的有些割裂"）。
+ * 控件自己不画框：那圈 1px 描边 + 沉底面 + 聚焦时的内描边整批撤下——它们与文件开头那条
+ * 通用 2px 焦点环叠在一起，就是交付方照片里"选中居然有两条边框线"的那两条。
+ * `.field` 之外的行内选择框（成员管理"改角色…"、明文查看器的字段选择器）仍是方框那一档，
+ * 见 .select-auto 的注释：撤框是按"有没有标签、有没有下划线可依赖"划的，不是一刀切。 */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.field > label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--t-text-muted);
+}
+.field:focus-within > label {
+  color: var(--t-text);
+}
+/* 静置线与走满动画落在控件那一行：`.field-line` 本体（position:relative 与 flex 排布）
+ * 住在下方「字段行内」那一段，那条规则里同时挂了这条 border-bottom——一个键只出现一次。 */
+.field-line::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 0;
+  height: 1px;
+  background: var(--scene-focus);
+  transition: width var(--motion-duration-entrance) var(--motion-ease-out);
+}
+.field-line:focus-within::after {
+  width: 100%;
+}
+/* 报错与只读两档由 FieldFrame 挂在 `.field` 上的 data 属性表达：CSS 够不着父元素，
+ * 本仓库也不引 `:has()` 判定（同 .input-icon 那条口径）。 */
+.field[data-invalid='true'] .field-line {
+  border-bottom-color: var(--t-danger);
+}
+.field[data-invalid='true'] .field-line::after {
+  background: var(--t-danger);
+}
+.field[data-readonly='true'] .field-line::after {
+  display: none;
+}
+.field[data-readonly='true'] .input {
+  cursor: default;
+}
+/* 字段里的控件：撤框、撤沉底、撤内阴影，文字左沿与标签对齐。
+ * 排在下面那几条 `.input:focus` 之前也没关系——真正兜住"聚焦不再画内描边"的是紧随其后的
+ * 那两条（特异度更高一档），不靠源码顺序碰运气。 */
+.field .input,
+.field .select {
+  padding-left: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.field .input:focus,
+.field .select:focus {
+  border: 0;
+  box-shadow: none;
+}
+/* 焦点指示只留那条走满的线：通用的 2px 焦点环会在这些控件外面再套一个圆角方框，
+ * 与下划线是两套语言，同时出现反而看不出焦点在哪。摘掉的只是控件本体——
+ * 行右侧那枚显示/隐藏钮、铅笔与 CTA 仍是按钮，没有下划线可依赖，焦点环保留。 */
+.field :is(.input, .select):focus-visible {
+  outline: none;
+}
+.input,
+.select {
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--t-border-strong);
+  background: var(--t-surface-sunken);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 13.5px;
+  width: 100%;
+  box-shadow: inset 0 1px 2px var(--shadow-inset, transparent);
+  transition:
+    border-color var(--motion-duration-hover) var(--motion-ease),
+    box-shadow var(--motion-duration-hover) var(--motion-ease);
+}
+.input::placeholder {
+  color: var(--t-text-muted);
+  opacity: 0.85;
+}
+.input:hover:not(:disabled),
+.select:hover:not(:disabled) {
+  border-color: var(--t-text-muted);
+}
+.input:focus,
+.select:focus {
+  border-color: var(--t-primary);
+  box-shadow: inset 0 0 0 1px var(--t-primary);
+}
+.input:disabled,
+.select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.input[aria-invalid='true'],
+.select[aria-invalid='true'] {
+  border-color: var(--t-danger);
+}
+/* Radix Select 的触发钮沿用 .select 那一档几何，只多让出一条箭头槽：
+ * 原生 <select> 的箭头由操作系统画在 padding 内，Radix 的要自己摆，
+ * 所以文字右侧必须腾出位置，长选项名才不会压在箭头上。 */
+.select-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+  text-align: left;
+  padding-right: 28px;
+  cursor: pointer;
+}
+.select-trigger[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* 行内用法（表格里那枚"改角色…"、明文查看器那枚字段选择器）要贴着文字收缩，
+ * 不铺满整行。原先它们写的是 inline style={{width:'auto'}}；这里必须留在同一层里做修饰符——
+ * @layer mda 的优先级高于 utilities，用 Tailwind 的 w-auto 压不住 .select 的 width:100%。
+ * 同特异度、写在 .select 之后，所以它盖得住那一档。 */
+.select-auto {
+  width: auto;
+}
+.select-icon {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  color: var(--t-text-muted);
+  pointer-events: none;
+}
+/* 浮层复用 .dropdown-menu/.dropdown-item 那套菜单词汇，只把宽度钉成触发钮的宽度：
+ * 本应用已有整套菜单色与间距，为 Select 另造一套只会让两处以后各改各的。 */
+.select-content {
+  width: var(--radix-select-trigger-width);
+}
+
+/* ---------------------------------------------------------------- 导入 / 导出弹窗
+ * 六段类名与取值逐字取自 design/prototype.html 第 353–399 行那一段（「导入导出弹窗」注释块），
+ * 令牌名按上面快捷启动器那段注释里已经定下的对照表换：
+ *   --bg-glass-light → --t-surface-sunken、--bg-glass-heavy → --t-surface-elevated、
+ *   --border-glass → --t-border、--border-glass-subtle → --t-border-subtle、
+ *   --hover-bg → --row-hover、--text-dark → --t-text、--text-main → --t-text-body、
+ *   --text-muted → --t-text-muted、--primary → --t-primary、--primary-glow → --t-primary-glow。
+ * 只改两处：16px 圆角写成 --radius-md（同一档值），drop-zone 的 focus 不补外发光
+ * ——那会和全站 :focus-visible 的 2px 轮廓叠成两圈（表单那段注释里记过这条）。 */
+.drop-zone {
+  position: relative;
+  border: 2px dashed var(--t-border);
+  border-radius: var(--radius-md);
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--t-surface-sunken);
+  transition:
+    border-color var(--motion-duration-hover) var(--motion-ease),
+    background var(--motion-duration-hover) var(--motion-ease),
+    box-shadow var(--motion-duration-hover) var(--motion-ease);
+}
+.drop-zone:hover,
+.drop-zone.is-dragover {
+  border-color: var(--t-primary);
+  background: var(--row-hover);
+  box-shadow: 0 0 0 4px var(--t-primary-glow);
+}
+.drop-zone svg {
+  width: 48px;
+  height: 48px;
+  color: var(--t-text-muted);
+  /* Tailwind preflight 把 svg 定成 display:block（原型那边 svg 是行内元素，靠 text-align 就居中），
+   * 块级元素不吃 text-align，所以这一档要自己左右居中。 */
+  margin-inline: auto;
+  margin-bottom: 16px;
+}
+.drop-zone.is-dragover svg {
+  color: var(--t-primary);
+  transform: scale(1.1);
+}
+.drop-zone p {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--t-text);
+  margin-bottom: 6px;
+}
+/* 选中后显示的那枚文件名：宁可换行也不截断——"到底选了哪一份"是这一格唯一要说清的事，
+ * 用 ellipsis 掐尾会把重名的两份文件糊成同一句提示。 */
+.drop-zone .drop-file-name {
+  overflow-wrap: anywhere;
+}
+.drop-zone span {
+  font-size: 12.5px;
+  color: var(--t-text-muted);
+}
+
+.template-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  background: var(--t-surface-sunken);
+  border-radius: 12px;
+  border: 1px solid var(--t-border-subtle);
+}
+.template-action p {
+  font-size: 13px;
+  color: var(--t-text-body);
+}
+.btn-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-xs-outer);
+  background: var(--t-surface-elevated);
+  border: 1px solid var(--t-border);
+  color: var(--t-text);
+  font-size: 13px;
+  font-weight: 500;
+  transition:
+    background var(--motion-duration-hover) var(--motion-ease),
+    border-color var(--motion-duration-hover) var(--motion-ease);
+  cursor: pointer;
+}
+.btn-download:hover {
+  background: var(--row-hover);
+  border-color: var(--t-text-muted);
+}
+
+/* 原型这里就是主色文字（13.5px/500），照抄。实测四套主题的主色压在本弹窗那两种底（弹窗卡面 elevated
+ * 与那一格 sunken）上最低 5.51:1（glass 那一档），其余三档 7.33 / 11.97 / 16.12，全过 4.5；
+ * 这条由 themeContrast.test.ts 里 "--t-primary 当文字" 那一行钉住，改色板把它拉下去会当场变红。
+ * 它承重（"已识别文件，格式正确"是用户按下导入前的唯一确认），不能退成 --t-text-muted。
+ * 原型那对 display:none / .show 没有照搬：这一份是识别成功才挂载的元素（跟 .dropdown-menu
+ * 那一段开头记的同一条口径——常开常关的 DOM 换成条件挂载），隐藏态留在这儿只会成为死规则。 */
+.parsed-result {
+  margin-top: 16px;
+  font-size: 13.5px;
+  color: var(--t-primary);
+  font-weight: 500;
+  text-align: center;
+}
+
+.export-info-box {
+  background: var(--t-surface-sunken);
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid var(--t-border-subtle);
+}
+.export-info-box p {
+  font-size: 14px;
+  color: var(--t-text);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.export-info-box span {
+  font-size: 12.5px;
+  color: var(--t-text-muted);
+}
+/* 原型 846 行给这一枚 strong 挂了 inline 的主色——照抄，但换成我们的令牌名。
+ * 底色是这一格的 sunken，已在契约表 "--t-primary 当文字" 那一行按 4.5:1 验过四套主题。
+ * 字重不跟浏览器的 700，跟本文件 .empty-state strong 那一档 600：全站只有这一档，为两个字开第七档不值。 */
+.export-info-box strong {
+  color: var(--t-primary);
+  font-weight: 600;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--t-text-body);
+  cursor: pointer;
+  background: var(--t-surface-sunken);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--t-border-subtle);
+  transition: background var(--motion-duration-hover) var(--motion-ease);
+}
+.checkbox-label:hover {
+  background: var(--row-hover);
+}
+/* 这一档里的控件换成 Radix Checkbox（button），16px 那档尺寸由组件的 size-4 提供，
+ * 与原先这条 width/height 完全同值；hover 与底色仍归这条外壳规则管。 */
+
+/* ---------------------------------------------------------------- 徽标
+ * 状态从不只靠颜色：文字本身 + 边框 + 前导点三件事一起表达。
+ * 底保持透明——各主题的 success/warning/danger 是把对比度"刚好顶到 4.5:1"调出来的，
+ * 没有余量再吃一层带色的底，加任何 tint 都会把它们推下去。 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid currentColor;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.badge-success {
+  color: var(--t-success);
+}
+.badge-warning {
+  color: var(--t-warning);
+}
+.badge-danger {
+  color: var(--t-danger);
+}
+.badge-muted {
+  color: var(--t-text-muted);
+}
+/* 前导点：S 轮起挂在 .badge 自己上（原来那条 .badge-status::before 摘掉了）。
+ * .badge-status 现在是原型那颗"绿药丸 + <span class='status-dot'> 真点"的状态徽标，
+ * 两者叠在同一个元素上会长出两枚点。 */
+.badge::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+}
+
+/* ---------------------------------------------------------------- 表格：界面主角
+ * 这个产品本质上是一张台账，所以让表格承担视觉重量：规则线收在行内、
+ * 数字等宽、悬停只走 120ms 的背景色、表头用更沉的一条带来压住顶部。 */
+.table-wrap {
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-outer);
+  background: var(--t-surface);
+  box-shadow:
+    var(--glow-inset),
+    var(--shadow-sm);
+  overflow: hidden;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--t-text-muted);
+  padding: 9px var(--spacing-4);
+  background: var(--t-surface-sunken);
+  border-bottom: 1px solid var(--t-border);
+  white-space: nowrap;
+}
+.table td {
+  padding: 9px var(--spacing-4);
+  border-bottom: 1px solid var(--t-border);
+  vertical-align: middle;
+}
+/* 用户管理与角色管理两张台账沿用账号中心的居中口径（交付方 2026-10-21）：
+ * 文字、徽标与操作钮各自落在列宽的中线上，表头与表体共用同一条中线。 */
+.table.table-center th,
+.table.table-center td {
+  text-align: center;
+}
+.table tbody tr {
+  transition: background-color var(--motion-duration-hover) var(--motion-ease);
+}
+.table tbody tr:hover {
+  background: var(--row-hover);
+}
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* 审计日志（交付方 2026-10-21）：表格改成分页表 + 固定表头，页顶那枚「显示条数」收进页脚。
+ * 表头要吸顶就必须有自己的滚动区：页面级的 .system-page-body 滚动时 <th> 会先滚走。
+ * 所以卡片撑满剩余高度、内部再滚，页脚固定在最下面。 */
+.audit-section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  min-height: 0;
+}
+.audit-table {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  /* 窗口很矮时卡片不再塌成一条缝：撑住 240px，让外层容器去滚 */
+  min-height: 240px;
+}
+.audit-table-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+/* 吸顶表头：collapse 的边框在 WebKit 里会随滚动消失（Safari 的已知行为），
+ * 所以这张表单独换成 separate + 0 间距；行与行只画一条底线，不会因为 separate 叠成双线。 */
+.table-sticky-head {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+/* 只管表头那一行：AV 轮的菜单树用 `<th scope="row">` 画行名，若不限定 thead，
+ * 这些行头也会跟着 sticky 到顶部，滚起来整列名字会叠到表头上面。 */
+.table-sticky-head thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* 吸顶的表头必须不透光：--t-surface-sunken 在玻璃/曜石/赛博三套只有 .15/.02/.05 的透明层，
+   * 行从底下滚过时字会叠在表头上。所以先用不透明的 --t-bg 打底，再把卡片面（--t-surface）
+   * 与 sunken 两枚透明层按图片叠上去——合成出来就是"卡片上的表头"，滚动时却彻底挡住行。 */
+  background-color: var(--t-bg);
+  background-image:
+    linear-gradient(var(--t-surface-sunken), var(--t-surface-sunken)),
+    linear-gradient(var(--t-surface), var(--t-surface));
+}
+
+/* AX 二批（2026-10-22）：权限页改成仪表盘版式——顶部角色卡 + 三枚统计卡，
+ * 下面是「菜单权限 / 操作权限」两块面板；权限只占面板里的一格，不再是整行大字条。
+ * 所有面都从 --t-primary / --t-text-muted 派生，四套主题只换令牌、不换选择器。 */
+.perm-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-md);
+  background: var(--t-surface);
+  box-shadow: var(--glow-inset);
+}
+
+/* 角色卡：整条仪表盘里唯一带主色氛围的一块，用右上一枚低对比的盾形图标压住视觉重量。 */
+.perm-kpi--role {
+  position: relative;
+  overflow: hidden;
+  background-color: color-mix(in oklab, var(--t-primary) 6%, var(--t-surface));
+  background-image: linear-gradient(120deg, color-mix(in oklab, var(--t-primary) 10%, transparent), transparent 62%);
+  border-color: color-mix(in oklab, var(--t-primary) 22%, var(--t-border));
+}
+
+.perm-kpi-icon {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: color-mix(in oklab, var(--t-primary) 32%, transparent);
+  pointer-events: none;
+}
+
+.perm-kpi-label {
+  color: var(--t-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 14px;
+}
+
+.perm-kpi-value {
+  color: var(--t-text);
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 22px;
+}
+
+.perm-kpi-total {
+  color: var(--t-text-muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.perm-kpi-role-name {
+  overflow: hidden;
+  color: var(--t-text);
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perm-kpi-role-meta {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--t-text-muted);
+  font-size: 10.5px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+/* 统计条：底是 muted 的 16%，填充从主色 55% 走到实心主色；
+ * 暗色主题里这枚渐变自带一点辉光，亮色主题里只是"更实"的一段。 */
+.perm-meter {
+  display: block;
+  overflow: hidden;
+  height: 3px;
+  margin-top: 3px;
+  border-radius: var(--radius-full);
+  background: color-mix(in oklab, var(--t-text-muted) 16%, transparent);
+}
+
+.perm-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--t-primary) 55%, transparent), var(--t-primary));
+  transition: width var(--motion-duration-slow) var(--motion-ease);
+}
+
+/* 一级菜单分组按两栏瀑布排：四组的二级数量不同（0/5/4/2），按行对齐会在短组下面
+ * 留出一大块空白；多栏会按内容高度自己配平。块内禁止跨栏断开。 */
+.perm-roots {
+  columns: 2;
+  column-gap: 10px;
+}
+
+.perm-roots > * {
+  break-inside: avoid;
+  margin-bottom: 10px;
+}
+
+.perm-root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--t-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.perm-root-kids {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--t-divider);
+}
+
+/* 权限卡片：未选是中性灰面，选中是主色淡染 + 左侧主色细轨。
+ * 灰面从正文令牌派生——四套主题里 --t-text-muted 都是各自背景上的中灰，
+ * 直接拿 --t-surface-sunken 会在玻璃主题里变成 15% 白、几乎看不见。
+ * 二批把整条染面收成面板里的一格：同样 11% 的主色，面积小了以后不再糊成一片。 */
+.perm-card {
+  background-color: color-mix(in oklab, var(--t-text-muted) 7%, transparent);
+  transition:
+    background-color var(--motion-duration-hover) var(--motion-ease),
+    border-color var(--motion-duration-hover) var(--motion-ease),
+    box-shadow var(--motion-duration-hover) var(--motion-ease);
+}
+
+.perm-card:hover:not([data-selected='true']):not([data-disabled='true']) {
+  background-color: color-mix(in oklab, var(--t-text-muted) 12%, transparent);
+}
+
+.perm-card[data-selected='true'] {
+  background-color: color-mix(in oklab, var(--t-primary) 11%, transparent);
+  border-color: color-mix(in oklab, var(--t-primary) 45%, var(--t-border));
+  box-shadow: inset 2px 0 0 0 var(--t-primary);
+}
+
+/* ------------------------------------------------- 快速启动器概览条（BC 轮 2026-10-22）
+ * 交付方点名「页面太丑了,重新布局」。这页原来是 672px 的一列窄栏（右边整块空着），
+ * 四行"徽标 + 一颗文字按钮"把当前值与修改入口混在一起。现在把"现在是什么"抬到顶部四格概览。
+ * 三条只给外壳与两档字，值本身（kbd / Badge / 数字）用既有元素与工具类；
+ * 没有复用 .perm-kpi 那三枚：那组名字属于权限页仪表盘，跨页借名会让"改了权限卡顺手改坏启动器"。 */
+.launcher-kpi {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-md);
+  background: var(--t-surface);
+  box-shadow: var(--glow-inset);
+}
+
+.launcher-kpi-label {
+  color: var(--t-text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 14px;
+}
+
+.launcher-kpi-value {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--t-text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+
+/* ---------------------------------------------------------------- 状态块 */
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.94em;
+}
+
+.empty-state {
+  display: grid;
+  place-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-7) var(--spacing-4);
+  border: 1px dashed var(--t-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--t-text-muted);
+  text-align: center;
+  background: var(--surface-glow);
+}
+.empty-state strong {
+  color: var(--t-text);
+  font-weight: 600;
+}
+/* 错误块：实线边框 + 左侧危险色粗杠。虚线只留给"这里还没有东西"，
+ * 报错和空态不能长得一样，否则用户分不清是没数据还是取数失败。 */
+.empty-state--alert {
+  border-style: solid;
+  border-color: var(--t-border-strong);
+  border-left: 3px solid var(--t-danger);
+  background: var(--t-surface);
+}
+/* 面板内部的空态：外面已经有一层面板描边，这里再套一层虚线就成了"框里有框"。
+ * 去掉边与底，只留居中的文字。 */
+.main-panel .empty-state {
+  border: none;
+  background: transparent;
+  padding: var(--spacing-5) var(--spacing-4);
+}
+
+/* 加载指示：一圈静止轨道 + 一段主色弧。转不动时（减少动态）就留在原地当"还在等"的记号 */
+.spinner {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--t-border-strong);
+  border-top-color: var(--t-primary);
+  border-radius: var(--radius-full);
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-reduce-motion='true']) .spinner {
+    animation: spin 900ms linear infinite;
+  }
+}
+
+/* ---------------------------------------------------------------- 浮层
+ * 入场一次性把三件事说完：透明度、4px 模糊、12px 上移，300ms ease-out。
+ * 出场不做动画：关闭必须"立刻关掉"，补 150ms 的退场会把 Esc 的响应感拖成延迟感。
+ * 整组动画只在系统允许动效、且本机没开「减少动态效果」时挂上。 */
+.overlay-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  background: var(--overlay-veil);
+}
+.overlay-veil--center {
+  z-index: 50;
+  align-items: center;
+  justify-content: center;
+  /* 上沿多让出 --titlebar-inset：那一条是原生标题栏（红绿灯 + 拖动带），压在浮层之上，
+   * 弹窗标题行那颗关闭钮要是落进去会点不动。非 macOS 这一档是 0。 */
+  padding: calc(var(--spacing-4) + var(--titlebar-inset)) var(--spacing-4) var(--spacing-4);
+}
+.overlay-panel {
+  position: relative;
+  outline: none;
+  border-radius: var(--radius-outer);
+  /* 圆角要裁住子面：.modal-foot 那条 --t-surface-sunken 底色是直角矩形，不裁就会盖掉下面两个转角
+   * （抽屉早就写了这一条，所以只有弹窗露馅）。浮层类控件（Select / 下拉菜单）都 Portal 到 body，不受裁剪。 */
+  overflow: hidden;
+  box-shadow:
+    var(--glow-inset),
+    var(--shadow-dropdown);
+}
+/* Radix Dialog 的 Content 落位。为什么不用 left:50% + translate(-50%,-50%) 那种写法：
+ * .overlay-panel 的 panel-in 入场动画自己就要写 transform，两者会互相覆盖——补间那 300ms
+ * 面板会从左上角飞进来。这里改成「四边 inset + margin:auto + 高度自适应」，
+ * 不需要 transform 就能得到与原先「flex 容器 + padding + w-full max-w-lg」同样的盒子：
+ *   左右各让 --spacing-4 → 撑满即原 w-full；32rem 上限即原 max-w-lg（Tailwind 该档字面值）；
+ *   上沿让 --titlebar-inset + --spacing-4、下沿让 --spacing-4 → 与那条 padding 逐值相同。
+ * 差异只在一种边界情形：面板比可用区还高时，原先 flex 会上下等量溢出、这里贴顶不溢出。
+ * 实测在本应用最小窗（960x640）下 head + 70vh body + foot 不触顶，两者同形。 */
+.overlay-dialog {
+  position: fixed;
+  /* 与上面那枚遮罩同档，不是更高档：Radix 把 Overlay 与 Content 渲染成 body 下的两个兄弟，
+   * 同档时由挂载顺序决胜（Overlay 先、Content 后 → 面板压在遮罩上）。写成 51 会让两层模态
+   * 叠起来时（详情抽屉上开编辑弹窗）下面那层的面板顶穿上面那层的遮罩。
+   * 守卫在 stacking.test.ts，坏起来的样子是"弹窗整块被自家遮罩盖住且点不动"。 */
+  z-index: 50;
+  inset: calc(var(--spacing-4) + var(--titlebar-inset)) var(--spacing-4) var(--spacing-4);
+  height: fit-content;
+  margin: auto;
+  max-width: 32rem;
+}
+/* 抽屉那一档：原先是 flex 行里靠 margin-left:auto 推到右、align-self:flex-start 贴顶。
+ * 同样换成无 transform 的绝对定位，逐值对应：
+ *   上 = --spacing-3 + --titlebar-inset、右 = --spacing-3、下 = --spacing-3；
+ *   宽度 min(100%, 560px) 就是原来的 width:100% + max-width:560px；
+ *   高度自适应 + 同一条 max-height 上限，超出时贴顶（与原 align-self:flex-start 一致）。
+ * drawer-in 的 translateX 补间因此能照常工作，不被定位覆盖。 */
+.overlay-dialog--drawer {
+  position: fixed;
+  /* 同 .overlay-dialog 那条：与抽屉自己的遮罩（.overlay-veil，40）同档，靠挂载顺序压在它上面。 */
+  z-index: 40;
+  top: calc(var(--spacing-3) + var(--titlebar-inset));
+  right: var(--spacing-3);
+  bottom: var(--spacing-3);
+  width: min(100%, 560px);
+  height: fit-content;
+  max-height: calc(100% - var(--spacing-3) * 2);
+}
+/* 详情抽屉：壳层贴边之后，这里不再靠全局悬浮量定位，自己留一条 --spacing-3 的边，
+ * 右上角的圆角才看得见；max-width 保持 560px。上沿那档另加 --titlebar-inset，
+ * 理由与 .overlay-veil--center 相同：红绿灯那条原生标题栏压在抽屉头上，会吃掉关闭钮。 */
+.overlay-panel--drawer {
+  margin: calc(var(--spacing-3) + var(--titlebar-inset)) var(--spacing-3) var(--spacing-3) auto;
+  align-self: flex-start;
+  max-height: calc(100% - var(--spacing-3) * 2);
+  max-width: 560px;
+  width: 100%;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-outer);
+  box-shadow: var(--shadow-dropdown);
+  overflow: hidden;
+}
+@keyframes veil-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--overlay-offset)) scale(0.99);
+    filter: blur(var(--overlay-blur));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--overlay-offset));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-reduce-motion='true']) .overlay-veil {
+    animation: veil-in var(--motion-duration-hover) var(--motion-ease-out);
+  }
+  :root:not([data-reduce-motion='true']) .overlay-panel {
+    animation: panel-in var(--motion-duration-entrance) var(--motion-ease);
+  }
+  :root:not([data-reduce-motion='true']) .overlay-panel--drawer {
+    animation: drawer-in var(--motion-duration-entrance) var(--motion-ease);
+  }
+}
+
+.modal-head,
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-5);
+  border-bottom: 1px solid var(--t-border);
+}
+/* 情绪头部带：详情抽屉展开时那条"后端诊断结果"的颜色（ok/warn/bad/idle）由 data-tone 给。
+ * 原型没有这一层（它没有抽屉），所以这一档不上色彩字面值：面染用 color-mix 从当前主题的
+ * 语义色里取 12%，上沿压一条 2px 饱和语义色 —— 语义色本身已经在 --t-surface 上按
+ * 4.5:1 验过，作为图形只会更宽松。颜色之外仍有徽标文字与那句诊断话在说同一件事，
+ * 所以这一条不构成"只靠颜色表达状态"。 */
+[data-tone='neutral'] .drawer-head {
+  background: color-mix(in srgb, var(--t-primary) 12%, transparent);
+  box-shadow: inset 0 2px 0 var(--t-primary);
+}
+[data-tone='ok'] .drawer-head {
+  background: color-mix(in srgb, var(--t-success) 12%, transparent);
+  box-shadow: inset 0 2px 0 var(--t-success);
+}
+[data-tone='warn'] .drawer-head {
+  background: color-mix(in srgb, var(--t-warning) 12%, transparent);
+  box-shadow: inset 0 2px 0 var(--t-warning);
+}
+[data-tone='bad'] .drawer-head {
+  background: color-mix(in srgb, var(--t-danger) 12%, transparent);
+  box-shadow: inset 0 2px 0 var(--t-danger);
+}
+[data-tone='idle'] .drawer-head {
+  background: color-mix(in srgb, var(--t-text-muted) 12%, transparent);
+  box-shadow: inset 0 2px 0 var(--t-text-muted);
+}
+.modal-title,
+.drawer-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.modal-body,
+.drawer-body {
+  padding: var(--spacing-4) var(--spacing-5);
+  /* 浮层内部滚到底时不要把滚动甩给背后的页面 */
+  overscroll-behavior: contain;
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3) var(--spacing-5);
+  border-top: 1px solid var(--t-border);
+  background: var(--t-surface-sunken);
+}
+
+/* 原型 .modal-header-actions：标题右边那一组动作（个人信息页的铅笔 + 关闭的 X）。 */
+.modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+/* ---------------------------------------------------------------- 调整角色
+ * 这一屏原先是「一段 12px 说明 + 三行裸勾选框」：512px 的弹窗里只有左边 250px 有内容，
+ * 右半边整片空着；三行之间只有 8px，说明又占两行，读起来散。现在拆成三档：
+ *   目标条（给谁调、保存的语义）→ 列表头（已选几项）→ 角色卡（名称/标识/说明/停用徽标）。
+ * 版式与字号走 UsersSection 里的工具类；这里只放需要主题令牌与交互态的五条：
+ * 头像底，卡片的描边/沉底面、悬停、选中、选中悬停。选中态写在 data-selected 上，不引 :has()
+ * （本仓库的口径见 .field 那条注释）；inset 主色环叠在 1px 边框上得到 2px 的选中边，
+ * 盒子尺寸不变，点选时不会抖。整张卡是 label：勾选框仍是唯一状态源，卡片只扩大命中区。 */
+.role-picker-avatar {
+  /* 几何与字重沿用顶栏的 .user-avatar；那一枚是沉底，落在同样沉底的目标条上会消失 */
+  background: var(--t-surface-elevated);
+}
+.role-option {
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-md);
+  background: var(--t-surface-sunken);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-hover) var(--motion-ease),
+    border-color var(--motion-duration-hover) var(--motion-ease),
+    box-shadow var(--motion-duration-hover) var(--motion-ease);
+}
+.role-option:hover {
+  border-color: var(--t-border-strong);
+  background: var(--row-hover);
+}
+.role-option[data-selected='true'] {
+  border-color: var(--t-primary);
+  background: color-mix(in srgb, var(--t-primary) 8%, var(--t-surface-elevated));
+  box-shadow: inset 0 0 0 1px var(--t-primary);
+}
+.role-option[data-selected='true']:hover {
+  background: color-mix(in srgb, var(--t-primary) 12%, var(--t-surface-elevated));
+}
+
+/* 原型 .btn-icon-action：32px 圆形图标钮，比顶栏那 40px 小一档——弹窗头部地方紧。
+ * 编辑态把图标染成 --focus-ring 那一档主色（原型那边是把这颗按钮的文字色整个换成主色）：
+ * 这一档在 themeContrast.test.ts 里已按**非文字对比 3:1** 逐主题验过压在各套
+ * surface-elevated 上，所以照抄得下来；再往深一档的 --t-text 反而看不出模式变了。 */
+.btn-ghost.btn-icon-action {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-full);
+  background: var(--t-surface-elevated);
+  color: var(--t-text-body);
+}
+.btn-ghost.btn-icon-action[data-editing='true'] {
+  color: var(--focus-ring);
+}
+
+/* 原型 .form-input.readonly 那一档（`.input-underline`）随方框一起撤了：字段现在本来就是一条底线，
+ * 只读与可编辑的区分改由 `.field[data-readonly]` 承担（那条线不跟着聚焦亮），见表单那一段。 */
+
+/* ---------------------------------------------------------------- 锚定浮层菜单的定位原语
+ * 顶栏那三颗临时菜单用的原语：贴在触发钮下方的一块面，没有遮罩、没有焦点陷阱。
+ * 视觉本体（宽度、面、描边、圆角、投影、内边距）全在上面的 .dropdown-menu 那一段，
+ * 这里只管"贴在哪儿、几层、里面怎么排"。
+ * z-index 取 60 —— 必须高于抽屉与模态那两层（40/50）：Radix 的菜单 Content 同样 portal 到 body，
+ * 是遮罩与面板的第三个兄弟，而弹窗里就有下拉（编辑凭据、新建系统两处 SelectField）。停在原先那档
+ * 30，下拉列表会开在自家遮罩与面板底下。提示条那一层归 sonner 自己（[data-sonner-toaster] 999999999），
+ * 它本来就压得过这里的一切，与这一档无关。 */
+.popover-anchor {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+}
+.popover-panel {
+  /* position:absolute 与 top:calc(100%+12px) 已删：菜单改由 Radix DropdownMenu 渲染，
+   * 它的 Content 由 Popper 写内联坐标，这两条会被覆盖成死声明。
+   * 那 12px 的间距现在由 <Menu sideOffset> 给（导出那一档是 8px，原 .export-panel 的 top）。
+   * 锚定侧原来是 --right/--left 两条修饰符，同样改由 Radix 的 align 承担，修饰符已删。 */
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: calc(100vw - var(--spacing-4));
+}
+/* 左栏「导出系统」那一颗的下拉：原型 667 行给了 inline 的 width:120px。
+ * 120px 里去掉 .dropdown-menu 自身的 8px 内边距与 1px 描边还剩 102px，装得下「导出 Excel」这一行最宽的字。
+ * 同一条里原先还写 top:calc(100%+8px)，那条间距改由 sideOffset={8} 给，这里只剩宽度。 */
+.export-panel {
+  width: 120px;
+}
+/* 收藏星标：同一个位置在 star / starOff 之间切换（形变动画随 morphicons 一起撤了，
+ * 现在由 .icon-swap 那层补一点切换感），
+ * 点亮时用 --t-warning——它在契约里是按正文 4.5:1 验过的，作为图形只会更宽松。 */
+.fav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--t-text-muted);
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-hover) var(--motion-ease),
+    background-color var(--motion-duration-hover) var(--motion-ease),
+    border-color var(--motion-duration-hover) var(--motion-ease),
+    transform var(--motion-duration-press) var(--motion-ease-out);
+}
+.fav-toggle:hover {
+  border-color: var(--t-border-strong);
+  background: var(--row-hover);
+}
+.fav-toggle:active {
+  transform: scale(var(--press-scale));
+}
+.fav-toggle[aria-pressed='true'] {
+  color: var(--t-warning);
+}
+
+/* ---------------------------------------------------------------- 快捷启动器
+ * 这一扇窗对应原型那枚「全局搜索弹窗」，类名与取值逐字取自 design/prototype.html 第 430–466 行
+ * 那一段（.search-overlay / .search-modal / .search-input-wrap / .search-kbd / .search-body /
+ * .search-footer），令牌名换成令牌层里同值的那几枚：
+ *   --bg-glass-heavy → --t-surface-elevated、--border-glass → --t-border、
+ *   --divider-color → --t-divider、--bg-glass-light → --t-surface-sunken、
+ *   --hover-bg → --row-hover、--border-glass-subtle → --t-border-subtle。
+ *
+ * 【2026-10-20 交付方点名的第二处主动偏离】「优化这些描述,不够高级美观,包括提示信息:输入关键字以快速
+ * 检索全局加密保险库。」原型那枚 .search-empty（单行 13.5px 居中弱化字 + 32px 上下留白）与它下面那份
+ * 手写十行"—— 按…筛选"清单一起作废，换成 .search-lead（两行式状态块）+ .search-help（后端下发的对照表）。
+ * 这是本轮唯一动过的浮层版式；输入行、命中摘要、内容区高度上限、页脚四档字面值一条没改，
+ * 由 launcherApp.test.tsx 那组几何守卫继续钉着。
+ *
+ * 两处随窗口模型改写过，其余一律照抄：
+ *   1) 顶部让位从 15vh 改成固定 24px：vh 的参照物是这扇小窗，本体已经贴着窗沿，15vh = 87px 只会重新
+ *      造出一条空白带。页脚从原型的 47px 变 84.2px 是因为比原型多两组提示，靠 .search-footer 的 wrap 换行。
+ *   2) 原型靠 .search-overlay.show 做显隐（opacity/visibility 一条 + transform 一条），浮层的显隐
+ *      在 Rust 侧是 show()/hide()，没有中间态可补间，所以那两条 transition 落成一次入场动画。
+ *
+ * 【交付方点名的主动偏离，2026-10-18 19:5x】对着真机截图说「这个弹窗有问题,外面有个大片空白」。
+ * 原型的 position:fixed;inset:0 在浏览器里压的是整屏桌面，看不出边界；搬进一扇独立的置顶窗之后，
+ * 窗口本身是看得见的矩形，本体四周就多出 80px 侧带 + 93px 顶带 + 22px 底带一片死灰。处置与 S 轮二批
+ * 撤壳层留白同一条口径：真机体验优先于原型字面 —— .search-overlay 的 --overlay-veil/--blur-overlay、
+ * .search-modal 的 --blur-val（--blur）一并撤掉（透明窗里 WKWebView 采不到桌面，backdrop-filter 采的是
+ * 这扇窗自己的透明底，留着等于一条静默失效的声明），四套主题的 --t-surface-elevated 都是
+ * 0.85~0.95 alpha，卡片自带的那层底色足够承托正文。--overlay-veil / --blur-overlay 两枚令牌本身不动：
+ * 主窗的 Drawer / Modal 还在用（本文件 113、1792 行）。 */
+.launcher-body {
+  /* 与 launcher.rs 的 .transparent(true) 配套：这扇窗的可见内容只有 .search-modal，
+   * 底下一律透出桌面。主窗不受影响（它没有 .launcher-body）。 */
+  background: transparent;
+  overflow: hidden;
+}
+.search-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  /* 本体贴边之后这一圈只剩一个用途：接住 --shadow-dropdown。以 glass 那套
+   * 0 12px 48px -8px 为例，模糊半径的一半 24px 减掉 -8px 扩散 = 边缘外约 16px，再算 12px 下偏移
+   * ≈ 向下 28px、向上 4px，所以下沿比上沿多 4px。这是阴影落点，不是空白带。 */
+  padding: 24px 24px 28px;
+}
+.search-modal {
+  width: 100%;
+  max-width: 600px;
+  overflow: hidden;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-md);
+  background: var(--t-surface-elevated);
+  box-shadow: var(--shadow-dropdown);
+}
+/* 原型 .search-modal 静置在 translateY(-15px) scale(.98)，.show 之后回弹到原位（0.34,1.56,0.64,1）。
+ * 令牌层里最接近那一档的是 --motion-ease-spring；减动效时整条动画一起撤。 */
+@keyframes search-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(-15px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-reduce-motion='true']) .search-modal {
+    animation: search-modal-in var(--motion-duration-entrance) var(--motion-ease-spring);
+  }
+}
+.search-input-wrap {
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--t-divider);
+}
+.search-input-wrap svg {
+  width: 20px;
+  height: 20px;
+  margin-right: 12px;
+  color: var(--t-text-muted);
+}
+.search-input-wrap input {
+  flex: 1;
+  min-width: 0;
+  height: 60px;
+  border: none;
+  background: transparent;
+  color: var(--t-text);
+  font-family: inherit;
+  font-size: 16px;
+  outline: none;
+}
+.search-input-wrap input::placeholder {
+  color: var(--t-text-muted);
+}
+/* 原型这枚 Esc 芯片是个可点击的 span；这里换成同字形的 button（键盘可达、有可访问名），样式一字未改。 */
+.search-kbd {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--t-border-subtle);
+  border-radius: var(--radius-xs);
+  background: var(--row-hover);
+  color: var(--t-text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+  user-select: none;
+}
+/* 原型没有命中摘要这一行：它是本浮层既有能力（命中条数 / 耗时 / 索引规模 / 手动刷新）的落点。
+ * 内容区按原型是可滚动的，摘要放进去会随列表滚走，所以留在输入行与内容区之间，
+ * 取值沿用原型页脚那一档（12px 次要字 + --t-divider 一条边线）。 */
+.search-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-3);
+  padding: var(--spacing-2) 20px;
+  border-bottom: 1px solid var(--t-divider);
+  color: var(--t-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.search-body {
+  padding: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 空态与锁库两档共用的两行式状态块（顶掉原来的 .search-empty 单行居中）：
+ * 第一行说"现在该做什么 / 现在是什么状态"，第二行给一句限定，两档只换句子不换版式。
+ * 刻意与下面的语法表同一条左沿：居中一句、左对齐一张表，读起来像两个东西。 */
+.search-lead {
+  padding: 10px var(--spacing-2) 6px;
+}
+.search-lead-title {
+  color: var(--t-text);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.search-lead-sub {
+  margin-top: var(--spacing-1);
+  color: var(--t-text-body);
+  font-size: 12.5px;
+}
+/* 后端下发的检索语法说明。版式是一张对照表：左列 max-content 让字段名的冒号天然对齐，
+ * 右列吃剩余宽度，两列同处一条基线网格；组名一行横跨两列，所以三组之间的列宽完全一致。
+ * 左右各内缩 8px，与 .search-body 的 12px 合起来仍是 20px，跟输入行的净宽对齐。
+ * 配色刻意不用 --t-text-muted：那一档在 minimal/obsidian/cyber 三套里对 --t-surface-elevated
+ * 只有 1.92 / 2.25 / 1.84（themeContrast.test.ts 的 PROTOTYPE_EXEMPT 记着，照抄原型不改），
+ * 页脚那几枚图例可以担，这一整列要人读的说明不行，所以走 --t-text-body（同面对比 4.5 达标、无豁免）。 */
+.search-help {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--spacing-4);
+  row-gap: 2px;
+  align-items: baseline;
+  padding: 0 var(--spacing-2);
+}
+.search-help-group {
+  grid-column: 1 / -1;
+  margin: var(--spacing-2) 0 2px;
+  color: var(--t-text-body);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.search-help-pattern {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--t-text);
+  white-space: nowrap;
+  font-variant-ligatures: none;
+}
+.search-help-desc {
+  min-width: 0;
+  color: var(--t-text-body);
+  font-size: 12px;
+}
+.search-help-note {
+  padding: var(--spacing-1) var(--spacing-2);
+  color: var(--t-text-body);
+  font-size: 12px;
+}
+.search-help-note {
+  padding: var(--spacing-1) var(--spacing-2);
+  color: var(--t-text-muted);
+  font-size: 12px;
+}
+/* 原型只有三组导航提示（↑↓ / Enter / Esc），一行放得下。我们这一条比原型多两组
+ * （Tab 切换操作、全局快捷键回显），548px 的本体净宽放不下五个分组，所以补了 wrap：
+ * 快捷键那一组单独换到第二行，页脚从 47px 变 85px——窗口高度就是按这一档算的。 */
+.search-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--t-divider);
+  background: var(--t-surface-sunken);
+  color: var(--t-text-muted);
+  font-size: 12px;
+}
+.search-footer span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.search-footer kbd {
+  padding: 2px 6px;
+  border: 1px solid var(--t-border-subtle);
+  border-radius: var(--radius-xs);
+  background: var(--t-surface-elevated);
+  box-shadow: none;
+  font-family: inherit;
+  /* 全局 kbd 规则给的是 11px 等宽字；原型这两枚芯片跟随页脚的 12px 无衬线，这里把它压回去。 */
+  font-size: 12px;
+  font-weight: 600;
+}
+.search-footer-shortcut {
+  margin-left: auto;
+  white-space: nowrap;
+}
+/* 原型的弹窗没有结果列表，只有空态；主色实心选中行 + 徽标反相这套画法沿用之前那版。
+ * 行不再自己滚动，滚动归 .search-body 那一区。
+ *
+ * 【2026-10-20 交付方真机照片点名的坏版】行原来是 `1fr auto` 两列，右列里塞着
+ * "Enter 执行… · Tab 切换本条可用操作：A / B / C / D" 这一整句——探针实测它的 max-content = 507px，
+ * 而行内可用宽度只有 558px（本体 600 减 body 12×2 再减行内 8×2），于是左列只剩 43px
+ * （名称被挤成一两个字、元信息完全看不见），提示本身又冲出本体右沿被窗口裁掉。
+ * 改成整行单列三档：名称一行、元信息一行、操作条只在选中的那一行出现。
+ * 操作条收进选中行不丢能力：`onMouseEnter` 本就把选中位推到划过的那一行，
+ * 所以鼠标能点到任意一条的按钮，键盘则靠 ↑↓ 推选中位——两条路都在。 */
+.launcher-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.launcher-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 左右 8px 与 .search-body 的 12px 合起来正好 20px，跟输入行的净宽对齐；
+   * 纵向仍按原型内缩一档。 */
+  padding: 8px;
+  /* 描边常驻但平时透明：选中时只换颜色，不让行宽因边框而抖一下。
+   * 圆角与全站一致（--radius-sm = 8px），直角实心块贴在 16px 圆角的玻璃卡里就是照片里那条"不符合主题"。 */
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-hover) var(--motion-ease),
+    border-color var(--motion-duration-hover) var(--motion-ease);
+}
+.launcher-row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  min-width: 0;
+}
+.launcher-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.launcher-row-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--t-text-body);
+  font-size: 12px;
+}
+.launcher-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-1);
+}
+.launcher-row-hint {
+  min-width: 0;
+  font-size: 12px;
+}
+.launcher-row-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--spacing-1);
+  margin-left: auto;
+}
+/* 操作按钮：描边与字色跟着 currentColor 走（42% 那一档），所以四套主题里它永远和所在行
+   的文字同色系，不需要再为某一版底色单独写一套反相。 */
+.launcher-chip {
+  flex: 0 0 auto;
+  padding: 2px var(--spacing-2);
+  border: 1px solid color-mix(in srgb, currentColor 42%, transparent);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background-color var(--motion-duration-hover) var(--motion-ease);
+}
+/* Enter 要执行的那一枚才是实心主色——与 .chip-toggle[aria-selected] 和页码条当前页同一条
+ * "实心主色 + 反相字"口径。整站这一条链路上只有这一处用实心档：选中行退成染色面之后，
+ * 需要有一个更重的东西接住"现在按 Enter 会发生什么"。 */
+.launcher-chip[aria-pressed='true'] {
+  border-color: var(--t-primary);
+  background: var(--t-primary);
+  color: var(--t-text-inverse);
+  font-weight: 600;
+}
+.launcher-row:hover {
+  background: var(--row-hover);
+}
+/* 选中档：主色染色面 + 一圈主色描边，文字与徽标一律沿用主题自己的颜色。
+ * 原来是"整条实心主色 + 行内全部反相"，两块问题叠在一起——直角实心带贴在 16px 圆角的
+ * 玻璃卡里不像这个主题的东西，而 obsidian / cyber 两套的主色本身就是浅色或霓虹色，
+ * 实心铺满时整行糊成一片。反相那三条（.badge / .launcher-row-meta / on-primary-muted）随之下线。 */
+.launcher-row[aria-selected='true'] {
+  border-color: var(--t-primary);
+  background: color-mix(in srgb, var(--t-primary) 14%, transparent);
+}
+.launcher-row[aria-selected='true']:hover {
+  background: color-mix(in srgb, var(--t-primary) 20%, transparent);
+}
+/* 行内那两枚键名芯片：全局 kbd 是"画在浅面上"的那套（浅色底 + 下沿粗边 + 投影），
+ * 落在染色面上会多出一块不相关的白，这里换成与 .launcher-chip 同一条 currentColor 描边。 */
+.launcher-row-hint kbd {
+  border: 1px solid color-mix(in srgb, currentColor 42%, transparent);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+/* 操作回执与语法错误/报错共用的那一条整幅说明带：底色用行悬停那一档，
+ * 颜色留给调用处的工具类（text-danger / text-warning）或 .launcher-reply 决定。 */
+.launcher-note {
+  padding: var(--spacing-2);
+  border-radius: var(--radius-sm);
+  background: var(--row-hover);
+  font-size: 12px;
+}
+.launcher-reply {
+  color: var(--t-text-body);
+}
+/* 多条件回显那一行：它是"正在搜什么"的实时说明，不是一条需要被看见的结果，
+ * 所以只给内缩与一档小字，不铺底色带（底色带留给回执与报错那两类会消失的话）。 */
+.launcher-conditions {
+  padding: var(--spacing-1) var(--spacing-2);
+  color: var(--t-text-body);
+  font-size: 12px;
+}
+/* 手动重新查询：图标 + 两字标签，宽度跟着内容走（早前钉死 22px 见方时"刷新"两个字被裁掉了）。
+ * 配色沿用原型页脚那档次要字。 */
+.launcher-refresh {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-1);
+  height: 22px;
+  padding: 0 var(--spacing-2);
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--t-text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-hover) var(--motion-ease),
+    color var(--motion-duration-hover) var(--motion-ease),
+    transform var(--motion-duration-press) var(--motion-ease-out);
+}
+.launcher-refresh:hover:not(:disabled) {
+  background: var(--row-hover);
+  color: var(--t-text);
+}
+.launcher-refresh:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+}
+.launcher-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------- 提示条
+ * 三个槽位固定为「图标 → 文案 → 关闭」。sonner 的 `<li>` 里 DOM 顺序是「关闭 → 图标 → 文案」
+ * （node_modules/sonner/dist/index.mjs，li 的第一个孩子就是 closeButton），原先没有 order，
+ * 又有 `justify-content: space-between`，三块被摊到三个角上——交付方 2026-10-21 照片里
+ * 「× 在左、✓ 在中、文案贴右」就是这件事。order 把槽位排回去，space-between 随之撤掉。 */
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-md);
+  background: var(--t-surface-elevated);
+  box-shadow:
+    var(--glow-inset),
+    var(--shadow-dropdown);
+  color: var(--t-text);
+  font-size: 13px;
+  line-height: 20px;
+}
+/* 语气只落在图标上：文案走正文色。整条文字染成 success 绿读起来像一枚状态徽标，
+ * 不像一句"刚刚发生了什么"的提示；四档语气在图标上仍然——字形不同，不只靠颜色。
+ * 图标槽本身撑到一条行高（20px）并在里面居中：多行文案时它对齐的是**第一行**，
+ * 不再靠 JSX 上挂 margin 去凑那 2px。 */
+.toast [data-icon] {
+  order: 0;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 20px;
+}
+.toast-tone-info [data-icon] {
+  color: var(--t-text-muted);
+}
+.toast-tone-success [data-icon] {
+  color: var(--t-success);
+}
+.toast-tone-warning [data-icon] {
+  color: var(--t-warning);
+}
+.toast-tone-danger [data-icon] {
+  color: var(--t-danger);
+}
+.toast [data-content] {
+  order: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.toast [data-title] {
+  font-weight: 500;
+}
+/* 提示条关闭钮：图标只有 16px，点击区补到 22px 见方（桌面端下限），
+ * 未悬停时靠降低不透明度退到背景里，读文案时不抢注意力。 */
+.toast-dismiss {
+  order: 2;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -1px -1px 0 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--t-text-muted);
+  cursor: pointer;
+  opacity: 0.75;
+  transition:
+    background-color var(--motion-duration-hover) var(--motion-ease),
+    color var(--motion-duration-hover) var(--motion-ease),
+    opacity var(--motion-duration-hover) var(--motion-ease),
+    transform var(--motion-duration-press) var(--motion-ease-out);
+}
+.toast-dismiss:hover {
+  background: var(--row-hover);
+  color: var(--t-text);
+  opacity: 1;
+}
+.toast-dismiss:active {
+  transform: scale(var(--press-scale));
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--overlay-offset));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-reduce-motion='true']) .toast {
+    animation: toast-in var(--motion-duration-entrance) var(--motion-ease);
+  }
+}
+
+/* ---------------------------------------------------------------- 认证场景
+ * 照原型重绘后的那一层：满幅由当前主题派生的染底 + 左栏品牌与输电铁塔 + 右栏**裸字段**（没有卡面）。
+ * 整套界面里只有这里允许"有性格"——这几页是使用者和这台机器唯一一次面对面的握手，
+ * 之后的台账、设置、导入导出全部保持安静。
+ *
+ * 一个色值都不在这里出现：底、两束光、噪点、下划线、滑块、CTA 与铁塔配色全在 tokens.css 的
+ * --scene-* 里，由当前主题的 --t-* 经 color-mix 派生（S 轮起四套各自派生，亮档是
+ * glass/minimal、暗档是 obsidian/cyber），并被 themeContrast.test.ts 的场景表按
+ * 「染底 → 噪点最坏档 → 接近实心的报错条」逐主题压在 ≥4.5:1（描边与图标笔画 ≥3:1）。
+ *
+ * 随这次重绘一起删掉的：旧的 --hero-* 固定夜景板、照片素材，以及"在本子树里把通用令牌别名到
+ * 夜景色"那整段换皮动作。认证页现在和业务页共用同一套 --t-*，共用样式与 Tailwind 工具类
+ * （text-ink-muted 之类）在这里不需要任何特殊待遇，只有氛围与版式是这一层独有的。 */
+.auth-scene {
+  position: relative;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  isolation: isolate;
+  /* 顶部那一档高度是给钉在两条上的品牌条与主题切换器让位的，不是给正文的 */
+  padding: calc(var(--titlebar-inset) + max(88px, calc(env(safe-area-inset-top) + 68px))) 24px
+    max(28px, env(safe-area-inset-bottom));
+  background: var(--scene-canvas);
+}
+.auth-bg,
+.auth-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+/* 五层打底，层序从上看下：竖向蒙版 → 径向蒙版 → 两束光 → 左深右浅的五档主色渐变。
+ * 渐变走 90°（正左到正右）：使用者这一轮要的就是"从左到右变浅"，而只有正横向的止点位置
+ * 才等于 x 比例——带角度的渐变其取样要靠投影近似，themeContrast.test.ts 的 scenePoint
+ * 会退化成"差不多"。纵向的层次本来就交给两道蒙版与两束光，不需要渐变再掺一角。
+ * 竖/径两道蒙版用的是**同一枚** --scene-scrim，只是各档不透明度不同，所以先后可交换。 */
+.auth-bg {
+  z-index: 0;
+  background-image:
+    linear-gradient(180deg, var(--scene-scrim-t) 0%, var(--scene-scrim-c) 42%, var(--scene-scrim-b) 100%),
+    radial-gradient(125% 95% at 50% 48%, var(--scene-scrim-r) 0%, var(--scene-scrim-m) 60%, var(--scene-scrim-e) 100%),
+    radial-gradient(90% 72% at 88% 6%, var(--scene-glow-a) 0%, transparent 58%),
+    radial-gradient(85% 75% at 6% 94%, var(--scene-glow-b) 0%, transparent 62%),
+    linear-gradient(90deg, var(--scene-ramp-1) 0%, var(--scene-ramp-2) 24%, var(--scene-ramp-3) 54%, var(--scene-ramp-4) 80%, var(--scene-ramp-5) 100%);
+}
+/* 噪点：原型给的是 0.14，那是"看得见颗粒"的风格值；这里给 0.025 是预算值——
+ * 令牌层那枚 --scene-veil 按"往面上提 3% 反色"记最坏档，实际这一层比它更轻。 */
+.auth-grain {
+  z-index: 1;
+  opacity: 0.025;
+  mix-blend-mode: overlay;
+  background-image: var(--scene-grain);
+}
+
+/* 双栏：左品牌与铁塔，右表单。窄窗口转单列（见文末两档断点）。 */
+.auth-layout {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: calc(var(--spacing-7) + var(--spacing-3));
+  width: 100%;
+  max-width: 1100px;
+}
+.auth-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+/* 产品名用衬线：--font-display 是本仓库既有的那套（Georgia + 宋体族），全在本机字体里。
+ * 不引 Web 字体——内网离线装机时白屏比不好看更糟。 */
+.auth-hero__title {
+  font-family: var(--font-display);
+  font-size: clamp(35px, 4vw, 51px);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  margin-bottom: var(--spacing-2);
+  color: var(--t-text);
+}
+.auth-hero__visual {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 320px;
+  max-width: 100%;
+  height: 230px;
+  /* 原型标定：图与上下文字各留 22/26，标题那 8 由上面的 margin 给 */
+  margin: 22px 0 26px;
+}
+.auth-hero__glow {
+  position: absolute;
+  inset: 8%;
+  pointer-events: none;
+  background-image: radial-gradient(circle at 50% 55%, var(--scene-node-glow) 0%, var(--scene-tip-glow) 40%, transparent 74%);
+  filter: blur(26px);
+}
+.auth-hero__desc {
+  max-width: 340px;
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: var(--t-text-muted);
+}
+/* 铁塔：整幅 SVG 是装饰（aria-hidden），笔画颜色全走 --scene-tower-* / --scene-node-* /
+ * --scene-tip-*，换主题就是那个主题的铁塔。perspective + rotateX/rotateY 复刻原型那 3D 摆位。 */
+.auth-tower {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  perspective: 1000px;
+  perspective-origin: 50% 58%;
+}
+.auth-tower__grid {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform: rotateX(16deg) rotateY(-12deg);
+  transform-style: preserve-3d;
+  filter: drop-shadow(0 22px 26px var(--shadow-inset));
+}
+/* 电流沿导线跑：dasharray/dashoffset 是几何量不是颜色，留在样式里；描边色来自令牌。 */
+.auth-tower__pulse {
+  stroke-dasharray: 16 220;
+  stroke-dashoffset: 236;
+}
+/* 节点与塔尖的呼吸以自身包围盒为原点缩放，否则 transform-origin 会算到整幅 SVG 的中心 */
+.auth-tower__node,
+.auth-tower__tip {
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+/* 右栏：最大 380px、靠右落位（原型就是这一档窄栏），表单铺满栏宽。 */
+.auth-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 380px;
+  justify-self: end;
+}
+.auth-title {
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  margin-bottom: var(--spacing-2);
+  color: var(--t-text);
+}
+.auth-sub {
+  margin-bottom: 42px;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--t-text-muted);
+}
+.auth-form {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 认证页在这一档之上只加三件事：更宽的行距、16px 的输入字号（原型钉的那一档，不是 --text-* 里的任何一档）、
+ * 以及 autofill 那三条。下划线、走满动画、撤框、摘焦点环现在都在基础层的 `.field` 上，这里不再画第二遍
+ * （两份定义迟早会漂——本轮之前它们就已经漂过一次：认证页摘了焦点环，业务页没摘）。
+ * 原来这里还有一条 :root[data-theme='high-contrast'] 的加粗档——S 轮主题集合收敛到原型那四套之后
+ * high-contrast 整体作废，那条连同那一档一起撤下（需求 §5.4 的冲突记在交付文档）。 */
+.auth-panel .field {
+  /* 只剩认证页真正特有的两档：更宽的行距与 28px 段距。原先那条 padding-bottom: 10px 是给
+   * "线画在整块底部"留的呼吸位，线挪到 `.field-line` 之后它变成线以下的空档，随之撤掉。 */
+  gap: var(--spacing-2);
+  margin-bottom: 28px;
+}
+.auth-panel .field > label {
+  letter-spacing: 0.08em;
+}
+.auth-panel .input {
+  min-height: 26px;
+  padding: 0;
+  font-size: 16px;
+  color: var(--t-text);
+  caret-color: var(--t-text);
+}
+/* 占位符按原型是更淡的一档，但那一档在本仓库过不了 4.5:1，所以仍是次要文字色 */
+.auth-panel .input::placeholder {
+  opacity: 1;
+  color: var(--t-text-muted);
+}
+/* 自动填充会把输入框染成浏览器自己的浅色，认证页的底就没有了；把文字与光标钉回令牌，
+ * 并用一个超长过渡把背景色变化挡在可见之外（Chromium/WKWebView 都吃这一套）。 */
+.auth-panel .input:-webkit-autofill,
+.auth-panel .input:-webkit-autofill:hover,
+.auth-panel .input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--t-text);
+  caret-color: var(--t-text);
+  transition: background-color 999999s ease-in-out 0s;
+}
+/* 报错行内条：--t-danger 压在染底上任何一档都到不了 4.5（实测最紧 4.00），
+ * 所以报错不落在裸底上，而是落在这条接近实心的 --scene-panel 上。 */
+.auth-alert {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  margin-bottom: var(--spacing-4);
+  padding: var(--spacing-3) var(--spacing-4);
+  border: 1px solid var(--t-danger);
+  border-radius: var(--radius-nested);
+  background: var(--scene-panel);
+  color: var(--t-danger);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+.auth-alert-detail {
+  font-size: 12.5px;
+  color: var(--t-text-muted);
+}
+/* 主 CTA：整宽实心条，取"文字色当底、底色当字"的反相档（原型那枚浅薄荷压深墨的按钮）。
+ * 全站按钮默认没有这么宽，也没有这枚反相取色，所以只在这一处给。 */
+.auth-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  width: 100%;
+  min-height: 48px;
+  margin-top: 36px;
+  border: 0;
+  /* 原型是 6px 的轻角按钮：比 --radius-sm 更收，取两档半径的中点 */
+  border-radius: calc((var(--radius-sm) + var(--radius-xs)) / 2);
+  background: var(--scene-cta-bg);
+  color: var(--scene-cta-ink);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  box-shadow: var(--shadow-sm);
+}
+.auth-submit:hover:not(:disabled) {
+  background: var(--scene-cta-bg);
+  box-shadow: var(--shadow-dropdown);
+}
+.auth-submit:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.auth-stack {
+  display: flex;
+  flex-direction: column;
+}
+.auth-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  padding: var(--spacing-3);
+  border: 1px solid var(--scene-panel-line);
+  border-radius: var(--radius-nested);
+  background: var(--scene-panel);
+}
+.auth-users {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-4);
+}
+.auth-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+/* 使用者选择卡：选中靠描边 + 主色轻染 + 左上角标记，三件事一起说 */
+.auth-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--spacing-3);
+  border: 1px solid var(--scene-panel-line);
+  border-radius: var(--radius-md);
+  background: var(--scene-panel);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color var(--motion-duration-hover) var(--motion-ease),
+    background-color var(--motion-duration-hover) var(--motion-ease),
+    transform var(--motion-duration-press) var(--motion-ease-out);
+}
+.auth-user:hover {
+  border-color: var(--t-border-strong);
+  background: var(--row-hover);
+}
+.auth-user:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+}
+.auth-user[aria-checked='true'] {
+  border-color: var(--t-primary);
+  background: var(--nav-active);
+  box-shadow:
+    inset 0 0 0 1px var(--t-primary),
+    var(--shadow-sm);
+}
+
+/* 左上角企业标识条：一条渐变竖杠 + 中英两行。固定在这个角上，不随正文滚动。 */
+.corp-brand {
+  position: absolute;
+  z-index: 3;
+  top: calc(var(--spacing-5) + var(--titlebar-inset));
+  left: var(--spacing-5);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  pointer-events: none;
+}
+.corp-brand__mark {
+  display: block;
+  flex-shrink: 0;
+}
+.corp-brand__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1.1;
+}
+.corp-brand__name {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--t-text);
+}
+.corp-brand__sub {
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--t-text-muted);
+}
+
+/* 右上角主题切换（分段控件）：滑块靠 --scene-switch-index 位移，由组件写 0/1/2/3。
+ * 四档几何在令牌层声明，这里只用；位移走弹性一点的曲线，落定时有一下回弹。 */
+.theme-switch {
+  position: absolute;
+  z-index: 4;
+  top: calc(var(--spacing-5) + var(--titlebar-inset));
+  right: var(--spacing-5);
+  display: flex;
+  align-items: center;
+  padding: var(--scene-switch-pad);
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-full);
+  background: var(--scene-switch-track);
+}
+.theme-switch__slider {
+  position: absolute;
+  top: var(--scene-switch-pad);
+  left: var(--scene-switch-pad);
+  width: var(--scene-switch-btn-w);
+  height: var(--scene-switch-btn-h);
+  border-radius: var(--radius-full);
+  background: var(--scene-switch-thumb);
+  box-shadow: var(--shadow-sm);
+  transform: translateX(calc(var(--scene-switch-index) * var(--scene-switch-btn-w)));
+  /* 带过冲的落定曲线（原型 .45s / cubic-bezier(.34,1.42,.64,1)）：滑块要"走到位再弹一下"，
+   * 用 ease-out 只是瞬移到，看不出档位换了。整条声明加 !important 是因为 lib/theme.ts 在改
+   * data-theme/data-reduce-motion 的那一帧会给所有元素注入一条 transition none 的 !important 规则
+   * （满屏同时补间颜色会糊成一片），而切换器的位移正是那一帧里变的——没有 !important，
+   * 点下去只会看到滑块瞬移。这条注释里不能出现花括号：themeContrast.test.ts 是按
+   * 「选择器 + 到第一个右花括号为止」截取规则块的，注释里的括号会把块截断。
+   * 面与影跟位移一起补间（原型也是 background-color/box-shadow 各 .35s），滑块走过时才不像贴纸。 */
+  transition:
+    transform var(--motion-duration-entrance) var(--motion-ease-spring),
+    background-color var(--motion-duration-entrance) var(--motion-ease),
+    box-shadow var(--motion-duration-entrance) var(--motion-ease) !important;
+  pointer-events: none;
+}
+.theme-btn {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: var(--scene-switch-btn-w);
+  height: var(--scene-switch-btn-h);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  cursor: pointer;
+}
+/* 名片的缩放三档照抄原型（悬停 1.08、选中 1.10、按压 0.92）：这一档切换器摆的是色块名片
+ * 而不是日/月图标，明暗身份已由主题自己携带，所以缩放挂在名片上，选中不只靠滑块位置表达。
+ * 下面每条 !important 与上面滑块的位移同理——theme.ts 改属性的那一帧会全站压掉 transition。 */
+.theme-btn .theme-preview {
+  transition: transform var(--motion-duration-entrance) var(--motion-ease-pop) !important;
+}
+.theme-btn:hover .theme-preview {
+  transform: scale(1.08);
+}
+.theme-btn[aria-checked='true'] .theme-preview {
+  transform: scale(1.1);
+}
+.theme-btn:active .theme-preview {
+  transform: scale(0.92);
+}
+.theme-btn:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* 认证页入场与铁塔动画。关键帧常驻，但只在"系统没要求减少动效、应用内也没关"时才挂上：
+ * 两道约束是现成机制（prefers-reduced-motion 与 --scene-* 同层的 data-reduce-motion）。 */
+@keyframes auth-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--overlay-offset) * 1.5));
+    filter: blur(var(--overlay-blur));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+@keyframes tower-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-9px);
+  }
+}
+@keyframes tower-glow {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.07);
+  }
+}
+@keyframes tower-sway {
+  0%,
+  100% {
+    transform: rotateX(16deg) rotateY(-12deg);
+  }
+  50% {
+    transform: rotateX(16deg) rotateY(12deg);
+  }
+}
+@keyframes tower-flow {
+  from {
+    stroke-dashoffset: 236;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes tower-node {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+}
+@keyframes tower-tip {
+  0%,
+  100% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.35);
+  }
+}
+@keyframes scene-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-reduce-motion='true']) .auth-panel {
+    animation: auth-in var(--motion-duration-entrance) var(--motion-ease);
+  }
+  :root:not([data-reduce-motion='true']) .corp-brand {
+    animation: scene-in var(--motion-duration-entrance) var(--motion-ease-out) both;
+  }
+  /* 切换器入场带一点过冲（原型 switchIn 用的就是弹性曲线），和它点下去之后滑块的落定同一条族，
+   * 这一枚控件从头到尾的手感才是同一个。 */
+  :root:not([data-reduce-motion='true']) .theme-switch {
+    animation: scene-in var(--motion-duration-entrance) var(--motion-ease-pop) both;
+  }
+  :root:not([data-reduce-motion='true']) .auth-hero__visual {
+    animation: tower-float 7s ease-in-out infinite;
+  }
+  :root:not([data-reduce-motion='true']) .auth-hero__glow {
+    animation: tower-glow 5s ease-in-out infinite;
+  }
+  :root:not([data-reduce-motion='true']) .auth-tower__grid {
+    animation: tower-sway 9s ease-in-out infinite;
+  }
+  :root:not([data-reduce-motion='true']) .auth-tower__pulse {
+    animation: tower-flow 3.2s linear infinite;
+  }
+  :root:not([data-reduce-motion='true']) .auth-tower__pulse--2 {
+    animation-delay: 1.6s;
+  }
+  :root:not([data-reduce-motion='true']) .auth-tower__node {
+    animation: tower-node 2.8s ease-in-out infinite;
+  }
+  :root:not([data-reduce-motion='true']) .auth-tower__node--delay {
+    animation-delay: 1.4s;
+  }
+  :root:not([data-reduce-motion='true']) .auth-tower__tip {
+    animation: tower-tip 2.4s ease-in-out infinite;
+  }
+}
+
+/* 三档宽度照原型：≤900 收窄铁塔，≤820 转单列（主窗口 minWidth 960，配合系统缩放真实可达），
+ * ≤480 缩小品牌条与切换器。窄窗口收起的是装饰与尺寸，必填说明、校验、主 CTA 一律留下。 */
+@media (max-width: 900px) {
+  .auth-layout {
+    gap: 44px;
+  }
+  .auth-hero__visual {
+    width: 280px;
+    height: 200px;
+    margin: 18px 0 22px;
+  }
+}
+
+@media (max-width: 820px) {
+  .auth-scene {
+    padding-top: max(112px, calc(env(safe-area-inset-top) + 92px));
+  }
+  .auth-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 40px;
+  }
+  .auth-panel {
+    max-width: 100%;
+    justify-self: center;
+  }
+  .auth-title {
+    font-size: 28px;
+  }
+  .auth-sub {
+    margin-bottom: 32px;
+  }
+}
+
+@media (max-width: 480px) {
+  .corp-brand {
+    top: max(18px, env(safe-area-inset-top));
+    left: max(18px, env(safe-area-inset-left));
+    gap: 10px;
+  }
+  .corp-brand::before {
+    width: 2.5px;
+    height: 22px;
+  }
+  .corp-brand__name {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+  }
+  .corp-brand__sub {
+    font-size: 9px;
+    letter-spacing: 0.24em;
+  }
+  .theme-switch {
+    top: max(18px, env(safe-area-inset-top));
+    right: max(18px, env(safe-area-inset-right));
+    --scene-switch-btn-w: 32px;
+    --scene-switch-btn-h: 28px;
+    --scene-switch-pad: 2.5px;
+  }
+  .theme-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+  .auth-scene {
+    padding-top: max(96px, calc(env(safe-area-inset-top) + 78px));
+  }
+  .auth-hero__visual {
+    width: 240px;
+    height: 172px;
+    margin: 14px 0 18px;
+  }
+  .auth-hero__title {
+    font-size: 30px;
+  }
+  .auth-hero__desc {
+    font-size: 13.5px;
+  }
+}
+/* 字段行：输入框永远包一层定位容器，好让前导图标与行内操作（显示/隐藏密码）落在框内。
+ * 这条是业务页与认证页共用的，改动会同时影响台账与设置页。
+ * 前导图标的让位宽度由组件挂 .input-icon 显式声明——不用 :has() 判定，
+ * 这条要落在 WKWebView 上，靠显式类名比靠结构查询稳。 */
+.field-line {
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* 全站字段的那条静置底线：贴着控件这一行，而不是整块 `.field` 的底部——字段下面还挂着
+   * hint 与报错两行小字，线画在整块底部会被它们顶开，离输入的内容太远。
+   * 走满动画的 ::after 与报错/只读两档住在上面「表单」那一段。 */
+  border-bottom: 1px solid var(--scene-line);
+  transition: border-color var(--motion-duration-entrance) var(--motion-ease);
+}
+.field-line > .input {
+  flex: 1;
+  min-width: 0;
+}
+.field-icon {
+  position: absolute;
+  left: var(--spacing-4);
+  display: inline-flex;
+  color: var(--t-text-muted);
+  pointer-events: none;
+}
+.field-line .input-icon {
+  padding-left: calc(var(--spacing-6) + var(--spacing-3));
+}
+/* 行内右侧有操作（显示/隐藏密码）时，文字要在那之前停下，别钻到按钮底下 */
+.field-line .input-trailing {
+  padding-right: calc(var(--spacing-7) + var(--spacing-1));
+}
+.field-trailing {
+  position: absolute;
+  right: var(--spacing-2);
+  display: inline-flex;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border: 1px solid var(--t-border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+  background: var(--t-surface-elevated);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 图标切换感。原先由 morphicons 在 name 变化时做形变补间；那个依赖随本轮全量重构撤掉，
+ * 这里用一层极短的入场把它补回来——收藏星↔灰星、显示↔隐藏眼睛这类"同一位置换语义"
+ * 仍然看得出在变，而不是硬切。
+ * 时长复用 --motion-duration-press（150ms），位移复用全站那一档缓出曲线：
+ * 不新增开关、不新增档位，[data-reduce-motion] 与 prefers-reduced-motion 会把时长归零。 */
+.icon-swap {
+  animation: mda-icon-swap var(--motion-duration-press) var(--motion-ease-out);
+}
+
+@keyframes mda-icon-swap {
+  from {
+    opacity: 0.4;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+}

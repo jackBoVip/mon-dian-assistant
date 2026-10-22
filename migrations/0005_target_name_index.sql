@@ -1,0 +1,13 @@
+-- 0005：给导入去重的那条名称查询补上表达式索引。
+--
+-- TargetLookup::find() 每处理一行就要问一次「库里有没有同名的活跃目标」
+-- （src-tauri/src/importexport.rs:310，`WHERE lower(display_name)=?1 AND status='active' AND deleted_at IS NULL`）。
+-- 0001 只给 target_type 与 group_id 建了索引（migrations/0001_init.sql:113-114），display_name 一个都没有，
+-- 所以这条查询只能全表扫描，成本随「库里已经有多少目标」线性增长——而真实使用恰恰是往一个很大的台账里追加导入。
+--
+-- 实测代价（src-tauri/tests/import_scale.rs，release，1 万目标存量，500 次未命中查询）：
+--   单条查询 3.4 ms → 3 µs 量级；执行计划从 SCAN vault_targets 变成 SEARCH ... USING INDEX idx_targets_name。
+--   写侧（新建目标单价）+0% ~ +9%，即每行零点几毫秒。
+-- 索引建在 lower(display_name) 上而不是 display_name 上：查询的比较对象是函数结果，
+-- 只有表达式索引能被用上；这也与「同名判定不分大小写」这条既有语义一致。
+CREATE INDEX IF NOT EXISTS idx_targets_name ON vault_targets(lower(display_name));

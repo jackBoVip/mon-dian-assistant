@@ -1,0 +1,21 @@
+<svg id="app-mark" viewBox="140 132 760 760" width="760" height="760" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="boltGrad" x1="512" y1="200" x2="512" y2="824" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6ee7b7" />
+      <stop offset="0.5" stop-color="#10b981" />
+      <stop offset="1" stop-color="#047857" />
+    </linearGradient>
+    <filter id="innerGlow">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" result="shadowDiff" />
+      <feFlood flood-color="#ffffff" flood-opacity="0.3" />
+      <feComposite in2="shadowDiff" operator="in" />
+      <feComposite in2="SourceGraphic" operator="over" />
+    </filter>
+  </defs>
+  <path d="M 560 180 L 340 560 L 490 560 L 400 844 L 700 440 L 540 440 Z"
+        fill="url(#boltGrad)"
+        filter="url(#innerGlow)" />
+  <path d="M 560 180 L 540 440 M 340 560 L 490 560 M 400 844 L 700 440"
+        stroke="rgba(255,255,255,0.2)" stroke-width="8" stroke-linecap="round" />
+</svg>

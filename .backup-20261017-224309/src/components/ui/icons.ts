@@ -1,0 +1,86 @@
+//! 全站图标：只登记**实际用到**的 lucide 图标数据（IconNode），不做全量 re-export。
+//! 这里是图标名的唯一来源；消费方一律用 `<Icon name="…" />`，不得直接 import lucide。
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  CloudOff,
+  Copy,
+  Database,
+  Download,
+  Eye,
+  EyeOff,
+  Info,
+  KeyRound,
+  Lock,
+  LockOpen,
+  Moon,
+  PanelLeft,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings2,
+  ShieldCheck,
+  SlidersHorizontal,
+  Star,
+  StarOff,
+  Sun,
+  Trash,
+  TriangleAlert,
+  Undo2,
+  Upload,
+  User,
+  X,
+  Zap,
+} from 'lucide';
+import type { IconNode } from 'morphicons/react';
+
+export const ICONS = {
+  check: Check,
+  chevronDown: ChevronDown,
+  chevronNext: ChevronRight,
+  clock: Clock,
+  copy: Copy,
+  database: Database,
+  download: Download,
+  edit: Pencil,
+  eye: Eye,
+  eyeOff: EyeOff,
+  info: Info,
+  key: KeyRound,
+  lock: Lock,
+  lockOpen: LockOpen,
+  panel: PanelLeft,
+  plus: Plus,
+  refresh: RefreshCw,
+  search: Search,
+  settings: Settings2,
+  shield: ShieldCheck,
+  filter: SlidersHorizontal,
+  star: Star,
+  starOff: StarOff,
+  trash: Trash,
+  warning: TriangleAlert,
+  undo: Undo2,
+  upload: Upload,
+  close: X,
+  zap: Zap,
+  user: User,
+  cloudOff: CloudOff,
+  /* 认证页右上角主题切换器的三档：内蒙电力绿用闪电，浅/深各用日/月。
+   * 只登记在这里，业务页仍不得直接 import lucide。 */
+  sun: Sun,
+  moon: Moon,
+} satisfies Record<string, IconNode>;
+
+export type IconName = keyof typeof ICONS;
+
+/** 侧栏业务页 → 图标。key 与 SideMenu 的 PageKey 一致，后端菜单文案不受影响。 */
+export const PAGE_ICONS: Record<'accounts' | 'system' | 'launcher' | 'data', IconName> = {
+  accounts: 'key',
+  system: 'settings',
+  launcher: 'zap',
+  data: 'database',
+};
