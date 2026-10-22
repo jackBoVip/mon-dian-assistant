@@ -22,7 +22,7 @@ function SettingRow({ title, hint, children }: { title: string; hint: string; ch
     <li className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-6 border-b border-line py-3.5 last:border-b-0">
       <span className="min-w-0">
         <span className="block text-sm text-ink">{title}</span>
-        <span className="mt-1 block max-w-2xl text-pretty text-xs leading-relaxed text-ink-muted">{hint}</span>
+        <span className="mt-1 block max-w-2xl text-pretty text-xs leading-relaxed text-ink-body">{hint}</span>
       </span>
       <span className="flex shrink-0 items-center gap-2 pt-0.5">{children}</span>
     </li>
@@ -114,13 +114,13 @@ export function LauncherSettingsPage() {
               </Overview>
               <Overview label="结果条数上限">
                 <span className="tabular-nums">{prefs.data.resultLimit}</span>
-                <span className="text-xs font-normal text-ink-muted">条 · 在安全策略页改</span>
+                <span className="text-xs font-normal text-ink-body">条 · 在安全策略页改</span>
               </Overview>
             </div>
 
             <section className="surface p-4">
               <h2 className="text-sm font-semibold text-ink">唤起与推荐</h2>
-              <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+              <p className="mt-1 text-xs leading-relaxed text-ink-body">
                 三项都写在后端设置里，拨动即提交；下一次唤起或查询生效。
               </p>
               <ul className="mt-1 flex flex-col">
@@ -162,7 +162,7 @@ export function LauncherSettingsPage() {
 
             <section className="surface p-4">
               <h2 className="text-sm font-semibold text-ink">修改全局快捷键</h2>
-              <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+              <p className="mt-1 text-xs leading-relaxed text-ink-body">
                 前端不自行注册：这里只读取后端当前值并提交修改，注册与冲突检测由 Rust 完成。
               </p>
               <div className="mt-3 flex items-end gap-3">
