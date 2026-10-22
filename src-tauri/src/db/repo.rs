@@ -583,16 +583,6 @@ pub fn target_is_active(db: &Db, target_id: &str) -> Result<bool> {
     Ok(n > 0)
 }
 
-pub fn item_is_active(db: &Db, item_id: &str) -> Result<bool> {
-    let conn = db.lock_conn();
-    let n: i64 = conn.query_row(
-        "SELECT count(*) FROM vault_items WHERE id=?1 AND deleted_at IS NULL AND status='active'",
-        params![item_id],
-        |r| r.get(0),
-    )?;
-    Ok(n > 0)
-}
-
 pub fn item_payload(vk: &VaultKey, db: &Db, item_id: &str) -> Result<CredentialPayload> {
     let conn = db.lock_conn();
     let sealed = read_sealed(&conn, "vault_item_secrets", "item_id", item_id)?.ok_or(AppError::NotFound)?;

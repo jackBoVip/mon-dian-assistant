@@ -7,7 +7,7 @@
 
 use super::parser::{self, ParsedQuery};
 use super::search::{SearchDoc, SearchIndex};
-use crate::error::{AppError, Result};
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
 /// 快捷动作。前端按此渲染，后端仍会二次校验权限。
@@ -99,11 +99,6 @@ impl Default for ActionPolicy {
     fn default() -> Self {
         Self { allow_copy_password: true, require_reauth_for_password: true, can_copy_username: true }
     }
-}
-
-/// 锁定状态下唯一允许的响应：只提示解锁，不含任何台账信息。
-pub fn locked_response() -> Result<()> {
-    Err(AppError::Locked)
 }
 
 /// `show_recent_when_empty` 是设置 `quick_launcher_show_recent` 的当前值：需求 §285 要求"输入为空时可显示

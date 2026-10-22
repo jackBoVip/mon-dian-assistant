@@ -21,12 +21,6 @@ use crate::commands::launcher::{complete_fill, challenge_for_origin, FillRequest
 use crate::error::{AppError, Result};
 use crate::state::AppCore;
 
-pub struct ChannelInfo {
-    pub port: u16,
-    pub token: String,
-    pub started_at: i64,
-}
-
 pub fn channel_file(data_dir: &std::path::Path) -> PathBuf {
     data_dir.join("host-channel.json")
 }

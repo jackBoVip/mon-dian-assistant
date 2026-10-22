@@ -3,7 +3,7 @@
 
 use crate::db::Db;
 use crate::error::{AppError, Result};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 
 pub mod perm {
     // 菜单
@@ -93,16 +93,6 @@ pub fn roles_of(db: &Db, user_id: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT r.code FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=?1")?;
     let v = stmt.query_map(rusqlite::params![user_id], |r| r.get::<_, String>(0))?.collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(v)
-}
-
-pub fn is_member_of(db: &Db, user_id: &str, role_code: &str) -> Result<bool> {
-    let conn = db.lock_conn();
-    let n: Option<i64> = conn.query_row(
-        "SELECT count(*) FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=?1 AND r.code=?2",
-        rusqlite::params![user_id, role_code],
-        |r| r.get(0),
-    ).optional()?;
-    Ok(n.unwrap_or(0) > 0)
 }
 
 #[cfg(test)]

@@ -68,23 +68,6 @@ pub fn version(conn: &rusqlite::Connection) -> Result<i64> {
     Ok(v.unwrap_or(0))
 }
 
-/// 供备份/诊断使用：结构版本，不含任何数据。
-pub fn structure_report(db: &Db) -> Result<serde_json::Value> {
-    let conn = db.lock_conn();
-    let v = version(&conn)?;
-    let mut stmt = conn.prepare("SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")?;
-    let objects: Vec<(String, String)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<std::result::Result<_, _>>()?;
-    Ok(serde_json::json!({
-        "schema_version": v,
-        "expected_version": LATEST_VERSION,
-        "object_count": objects.len(),
-        "tables": objects.iter().filter(|(t, _)| t == "table").map(|(_, n)| n).collect::<Vec<_>>(),
-        "triggers": objects.iter().filter(|(t, _)| t == "trigger").map(|(_, n)| n).collect::<Vec<_>>(),
-    }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

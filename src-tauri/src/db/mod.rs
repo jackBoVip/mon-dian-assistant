@@ -9,8 +9,6 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Arc;
 
-pub type Shared = Arc<Db>;
-
 pub struct Db {
     conn: Arc<parking_lot::Mutex<Connection>>,
     pub path: String,
