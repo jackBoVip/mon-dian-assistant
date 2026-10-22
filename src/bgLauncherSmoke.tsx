@@ -3,6 +3,7 @@
  * 用 `__TAURI_INTERNALS__` 打桩后端那四条命令。桩会真的记住写入，所以拨一下开关、
  * 改一次快捷键以后，随后的重取数能读到新值——这样才验得到"界面跟着后端翻转"这半条。
  */
+import './styles/tokens.css';
 import './styles/global.css';
 
 type Row = [string, string];
@@ -69,6 +70,8 @@ const callbacks = new Map<number, (data: unknown) => void>();
 };
 
 document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') ?? 'glass';
+// 与主窗入口同一口径：没有这一档，--titlebar-inset 停在 0，红绿灯那条 28px 带不会被让出来。
+document.documentElement.dataset.os = 'mac';
 
 const { createRoot } = await import('react-dom/client');
 const { StrictMode } = await import('react');
