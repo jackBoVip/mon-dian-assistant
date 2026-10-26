@@ -915,9 +915,19 @@ mod tests {
         let path = package_path(&core, "0.2.0", "macos", "aarch64", &dmg);
         assert!(path.to_string_lossy().ends_with("0.2.0-macos-aarch64.dmg"));
 
-        // 清单里没有可识别扩展名时按平台兜底，仍然不是一个裸文件名。
-        let noext = manifest_for("0.2.0", "lan://app", 10, &"ab".repeat(32)).packages.remove(0);
-        assert!(package_path(&core, "0.2.0", "macos", "aarch64", &noext).to_string_lossy().ends_with(".dmg"));
+        // 清单里没有可识别扩展名时，兜底按**清单声明的平台**走，
+        // 不按跑测试的这台机器（原先这条在 Linux 上红：夹具的 platform 取
+        // std::env::consts::OS，于是 macos 的期望撞上 linux 的兜底）。
+        for (platform, expect) in [("macos", "dmg"), ("windows", "exe"), ("linux", "bin")] {
+            let mut noext = manifest_for("0.2.0", "lan://app", 10, &"ab".repeat(32)).packages.remove(0);
+            noext.platform = platform.into();
+            let path = package_path(&core, "0.2.0", platform, "x86_64", &noext);
+            assert!(
+                path.to_string_lossy().ends_with(&format!("0.2.0-{platform}-x86_64.{expect}")),
+                "平台 {platform} 无扩展名时应兜底成 .{expect}，实得 {}",
+                path.display()
+            );
+        }
     }
 
     /// 版本降级必须无效：源版本低于本机时界面显示「低于本机」并禁用按钮，而不是倒着升级。
