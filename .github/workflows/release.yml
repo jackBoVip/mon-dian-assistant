@@ -59,7 +59,12 @@ jobs:
             choco install nasm -y --no-progress
             "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           }
-          & "C:\Strawberry\perl\bin\perl.exe" -MLocale::Maketext::Simple -MParams::Check -MIPC::Cmd -e "print qq{strawberry perl ok: }\; print qq{$^X`n}"
+          # 只探测能力，别在这里打花哨的输出：上一版把 `print qq{...}\;` 写进
+          # pwsh 的双引号串里，反斜杠被 PowerShell 吃掉后 perl 自己语法错，
+          # 整个 job 挂在这一步（Windows 第六轮实撞）。真正决定用哪份 perl 的是
+          # 下一步在 bash 内前置 PATH，这里只保证 Strawberry 那份模块齐、能跑。
+          & "C:\Strawberry\perl\bin\perl.exe" -MLocale::Maketext::Simple -MParams::Check -MIPC::Cmd -e "1"
+          Write-Host "strawberry perl modules ok"
           "PERL=C:\Strawberry\perl\bin\perl.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Linux 打包依赖（Tauri v2 官方前置）
@@ -98,19 +103,27 @@ jobs:
         if: runner.os == 'macOS'
         run: npx tauri build --bundles app,dmg
 
-      - name: build Windows（nsis + msi）
+      - name: build Windows（nsis 与 msi 分两次调用）
         if: runner.os == 'Windows'
-        run: npx tauri build --bundles nsis,msi
+        run: |
+          npx tauri build --bundles nsis
+          npx tauri build --bundles msi
 
-      - name: build Linux（deb + appimage；rpm 视 runner 的 rpmbuild，缺则降级不阻塞）
+      - name: build Linux（deb / rpm / appimage 各自一次调用）
         if: runner.os == 'Linux'
         run: |
+          # 一次 `--bundles deb,rpm,appimage` 会把 externalBin 的侧车往同一个包里
+          # 登记两次，deb 打包直接失败：`invalid destination path /usr/bin/mda_fill_host
+          # - duplicate file entry; the same path was added to the package twice`
+          # （第六轮实撞；同一条在 macOS 上不成立——那边 app,dmg 必须一次写全）。
+          # 拆成逐目标调用，cargo 复用已编好的 release 二进制，不重复编译。
+          npx tauri build --bundles deb
           if command -v rpmbuild >/dev/null 2>&1; then
-            npx tauri build --bundles deb,rpm,appimage
+            npx tauri build --bundles rpm
           else
-            echo "::warning::runner 无 rpmbuild，本轮只产 deb + AppImage"
-            npx tauri build --bundles deb,appimage
+            echo "::warning::runner 无 rpmbuild，本轮跳过 rpm"
           fi
+          npx tauri build --bundles appimage
 
       - name: 生成 SHA-256 摘要清单
         shell: bash
