@@ -520,14 +520,22 @@ const TOKEN_SOURCE = 'src/styles/tokens.css';
 const TOKEN_MIRROR_SOURCE = 'src/lib/themeTokens.ts';
 const files = sourceFiles(resolve(process.cwd(), 'src'));
 
+/**
+ * Windows 上 `join()` 产出反斜杠，而下面登记的豁免是 POSIX 相对路径
+ * （`src/styles/tokens.css` / `src/lib/themeTokens.ts`）。不归一化就变成
+ * "豁免在 Windows 上永不命中"：tokens.css 自己那 150 处字面色值会被整片判成违规，
+ * 模板文件的危险色豁免同样失效（三端 CI 首跑实撞）。
+ */
+const posixPath = (p: string) => p.replace(/\\/g, '/');
+
 describe('配色来源唯一（需求 line 246「不得在每个组件中硬编码颜色」）', () => {
   it('除 tokens.css 外，任何源文件都不出现字面色值', () => {
     const literal = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(/;
     const hits: string[] = [];
     let mirrorUsed = false;
     for (const f of files) {
-      if (f.endsWith(TOKEN_SOURCE)) continue;
-      if (f.endsWith(TOKEN_MIRROR_SOURCE)) {
+      if (posixPath(f).endsWith(TOKEN_SOURCE)) continue;
+      if (posixPath(f).endsWith(TOKEN_MIRROR_SOURCE)) {
         mirrorUsed = literal.test(readFileSync(f, 'utf8'));
         continue;
       }
@@ -612,7 +620,7 @@ describe('配色来源唯一（需求 line 246「不得在每个组件中硬编�
     // 真正要保证的是所有"用"它的地方都带着危险语义。
     const variantMapEntry = /^\s*danger\s*:\s*['"][\w -]+['"],?\s*$/;
     const checked: string[] = [];
-    for (const f of files.filter((p) => !p.endsWith(TOKEN_SOURCE))) {
+    for (const f of files.filter((p) => !posixPath(p).endsWith(TOKEN_SOURCE))) {
       const lines = readFileSync(f, 'utf8').split('\n');
       for (let i = 0; i < lines.length; i++) {
         if (!danger.test(lines[i]) || variantMapEntry.test(lines[i])) continue;
@@ -620,7 +628,7 @@ describe('配色来源唯一（需求 line 246「不得在每个组件中硬编�
         // global.css 里那一档是危险色的**定义处**；模板文件里那一枚是令牌名与示例值（界面不读它），
         // 两处都不是"把危险色用在某个界面上"，所以按语义判定的这条不套它们。
         expect(
-          ctx.test(around) || f.endsWith('global.css') || f.endsWith(TOKEN_MIRROR_SOURCE),
+          ctx.test(around) || f.endsWith('global.css') || posixPath(f).endsWith(TOKEN_MIRROR_SOURCE),
           `${f}:${i + 1} 引用了危险色但上下文看不出危险语义`,
         ).toBe(true);
         checked.push(`${f}:${i + 1}`);

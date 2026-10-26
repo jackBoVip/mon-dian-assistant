@@ -54,6 +54,11 @@ jobs:
             libxdo-dev libssl-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf rpm
 
+      - name: 构建本 triple 的 Native Messaging 侧车（必须先于前端门禁）
+        # src/lib/ipcContract.test.ts 的 F33 守卫要求 binaries/ 里已有带 target triple
+        # 的宿主，否则 `npm run verify` 就红。本机因为早有侧车而看不出来。
+        run: bash scripts/prepare-host-binary.sh
+
       - name: npm ci + 前端门禁（tsc / vite build / vitest）
         run: |
           npm ci
@@ -62,9 +67,6 @@ jobs:
       - name: cargo test（后端全量测试）
         working-directory: src-tauri
         run: cargo test --all-targets
-
-      - name: 构建本 triple 的 Native Messaging 侧车
-        run: bash scripts/prepare-host-binary.sh
 
       - name: build macOS（app + dmg 必须同一次调用，单跑 dmg 会删掉 .app）
         if: runner.os == 'macOS'

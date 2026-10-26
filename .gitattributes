@@ -1,0 +1,31 @@
+# 字节级守卫按 sha256 对账（baseline-css-20261019/BASELINE.css.sha256、样式对账与产物资产表），
+# 而 GitHub Actions 的 Windows runner 默认 core.autocrlf=true，checkout 会把 LF 换成 CRLF，
+# 于是同一份文件在三端检出后哈希不同。这里把行尾钉死，不给平台默认值留口子。
+* text=auto eol=lf
+
+*.css text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 图标与二进制资产不做行尾转换（.icns/.ico 内含 PNG，文本化处理会直接损坏）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.icns binary
+*.ico binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
