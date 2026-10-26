@@ -26,8 +26,18 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Node 22 自带的 npm 10 校验不了本锁文件里 @tailwindcss/oxide-wasm32-wasi
+          # 那组 bundled 可选依赖（`npm ci` 报 Missing @emnapi/core/runtime），
+          # 而开发机的 npm 11.6.2 对同一份锁直接通过。所以钉死到与开发机一致的
+          # npm，不去重生成锁（重生会带进一批 transitive 版本漂移，赔上样式对账守卫）。
+          node-version: '24'
           cache: npm
+
+      - name: 钉住 npm 与开发机一致
+        run: |
+          npm install -g npm@11.6.2
+          node -v
+          npm -v
 
       - uses: dtolnay/rust-toolchain@stable
 
