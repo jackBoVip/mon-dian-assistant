@@ -95,9 +95,43 @@ jobs:
           npm ci
           npm run verify
 
-      - name: cargo test（后端全量测试）
+      - name: cargo test（后端全量测试 · macOS/Linux）
+        if: runner.os != 'Windows'
         working-directory: src-tauri
         run: cargo test --all-targets
+
+      - name: cargo test（后端全量测试 · Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: src-tauri
+        run: |
+          # 第七轮实撞：测试 exe 一起来就 0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND
+          # ——加载期缺导出符号，不是断言失败。这个特征码对应"二进制没有嵌入
+          # Common-Controls v6 的 manifest"：静态导入的 TaskDialogIndirect 等符号
+          # 只存在于 comctl32 v6，而 v6 只能靠激活上下文（manifest）加载；
+          # 应用包由 bundler 带 manifest，裸测试 exe 没有，所以在 Windows 上必然崩。
+          # 这里给测试链接补上清单；不通过就继续红，不静默降级成"跳过测试"。
+          $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+          if (-not $mt) { throw 'Windows SDK mt.exe 未找到，无法给测试 exe 嵌入 Common-Controls 清单' }
+          $sdkBin = Split-Path $mt.FullName
+          $env:PATH = "$sdkBin;$env:PATH"
+          $manifest = Join-Path $env:RUNNER_TEMP 'comctl6.manifest'
+          @'
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls"
+                  version="6.0.0.0" processorArchitecture="*"
+                  publicKeyToken="6595b64144ccf1df" language="*"/>
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          '@ | Set-Content -Encoding utf8 $manifest
+          # 只对测试生效：release 打包那条走的是 tauri 自己的清单，别混在一起改。
+          $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = '-C link-args=/MANIFEST:EMBED /MANIFESTINPUT:' + $manifest
+          cargo test --all-targets
 
       - name: build macOS（app + dmg 必须同一次调用，单跑 dmg 会删掉 .app）
         if: runner.os == 'macOS'
@@ -119,7 +153,13 @@ jobs:
           # 拆成逐目标调用，cargo 复用已编好的 release 二进制，不重复编译。
           npx tauri build --bundles deb
           if command -v rpmbuild >/dev/null 2>&1; then
-            npx tauri build --bundles rpm
+            # 第七轮实测：拆开之后 deb 过了，rpm **单独调用仍报同一句 duplicate**，
+            # 所以这不是调用方式问题，是 Tauri 的 rpm 打包对 externalBin 的登记缺陷。
+            # 让 rpm 失败不阻塞整轮（deb + AppImage 是可用交付），但显式报警，
+            # 不把"rpm 没产出"粉饰成"rpm 通过"。
+            if ! npx tauri build --bundles rpm; then
+              echo "::warning::rpm 打包失败（externalBin 在 rpm 里被重复登记，Tauri 侧缺陷）；本轮只交付 deb + AppImage"
+            fi
           else
             echo "::warning::runner 无 rpmbuild，本轮跳过 rpm"
           fi
