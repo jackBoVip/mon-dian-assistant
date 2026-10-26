@@ -130,7 +130,12 @@ jobs:
           </assembly>
           '@ | Set-Content -Encoding utf8 $manifest
           # 只对测试生效：release 打包那条走的是 tauri 自己的清单，别混在一起改。
-          $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = '-C link-args=/MANIFEST:EMBED /MANIFESTINPUT:' + $manifest
+          # 注意 `-C link-args=` 只吃**一个 token**：上一版写成
+          # `'-C link-args=/MANIFEST:EMBED /MANIFESTINPUT:...'`，中间那个空格让
+          # rustc 把 /MANIFESTINPUT 当成第二个输入文件名，直接报
+          # `multiple input filenames provided`（第八轮实撞）。所以拆成两条。
+          $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS =
+            '-C link-args=/MANIFEST:EMBED -C link-args=/MANIFESTINPUT:' + $manifest
           cargo test --all-targets
 
       - name: build macOS（app + dmg 必须同一次调用，单跑 dmg 会删掉 .app）
