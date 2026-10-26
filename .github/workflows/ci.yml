@@ -53,6 +53,12 @@ jobs:
             ~/.cargo/git
             src-tauri/target
           key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+      - name: 侧车必须在 cargo test 之前（干净检出上没有它）
+        # 第一次真跑（5dca02e）就红在这里：`cargo test --all-targets` 编本 crate 会先
+        # 跑 tauri_build，而它要求 externalBin 的 binaries/mda_fill_host-<triple> 先存在。
+        # 开发机因为 binaries/ 早有产物（gitignore）从不暴露，干净检出必崩。
+        shell: bash
+        run: bash scripts/prepare-host-binary.sh
       - name: cargo test（SQLCipher 由 pkg-config 提供）
         working-directory: src-tauri
         run: cargo test --all-targets

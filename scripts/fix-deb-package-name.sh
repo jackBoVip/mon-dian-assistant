@@ -48,5 +48,16 @@ if [ "$(readlink -f "$deb")" != "$(readlink -f "$out")" ]; then
 fi
 
 # dpkg 自己的校验器给结论，不靠肉眼对 Policy 条文。
-dpkg --validate-thing pkgname "$pkgname"
+# 用 `--validate-pkgname`（dpkg 1.18.16 起，各受支持发行版都有），不用
+# `--validate-thing`——后者在 dpkg 1.21（Ubuntu 22.04）里并不存在。
+# 退出码：0 合法 / 1 合法但不严格（lax 告警）/ 2 非法。
+rc=0
+dpkg --validate-pkgname "$pkgname" || rc=$?
+if [ "$rc" -eq 2 ]; then
+  echo "ERROR: dpkg 判定包名非法：$pkgname" >&2
+  exit 1
+fi
+if [ "$rc" -eq 1 ]; then
+  echo "WARNING: dpkg 判定包名仅 lax 合法（不符合严格规则）：$pkgname" >&2
+fi
 echo "deb package name: $(dpkg-deb -f "$out" Package) (file: $(basename "$out"))"

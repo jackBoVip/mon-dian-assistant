@@ -209,8 +209,11 @@ jobs:
           # productName 当包名，而 DebConfig 没有包名覆写键。Policy §5.6.6 要求
           # 包名为小写 ASCII；apt/dpkg 对这种包名的处置由真机定论，这里先让
           # dpkg 自己的校验器把判定留在日志里（不以 macOS 上的推断代替证据）。
+          # `--validate-pkgname` 自 dpkg 1.18.16 起存在；`--validate-thing` 在
+          # Ubuntu 22.04 的 dpkg 1.21 里没有，别用。
           echo "dpkg 对中文包名的判定："
-          dpkg --validate-thing pkgname '蒙电信产助手' && echo '  → 接受' || echo '  → 拒绝（见上一行原因）'
+          rc=0; dpkg --validate-pkgname '蒙电信产助手' || rc=$?
+          echo "  → exit=$rc（0 合法 / 1 仅 lax / 2 非法）"
           # 只重写 control 的 Package 与 deb 文件名；包内可执行文件、桌面入口
           # 的显示名（蒙电信产助手.desktop / Name=蒙电信产助手）保持不变。
           bash scripts/fix-deb-package-name.sh src-tauri/target/release/bundle/deb
