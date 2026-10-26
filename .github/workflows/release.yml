@@ -202,6 +202,20 @@ jobs:
           fi
           npx tauri build --bundles appimage
 
+      - name: Linux deb 包名收口（Debian Policy §5.6.6）
+        if: runner.os == 'Linux'
+        run: |
+          # 拆包实测：Tauri 生成的 control 是 `Package: 蒙电信产助手`——它直接拿
+          # productName 当包名，而 DebConfig 没有包名覆写键。Policy §5.6.6 要求
+          # 包名为小写 ASCII；apt/dpkg 对这种包名的处置由真机定论，这里先让
+          # dpkg 自己的校验器把判定留在日志里（不以 macOS 上的推断代替证据）。
+          echo "dpkg 对中文包名的判定："
+          dpkg --validate-thing pkgname '蒙电信产助手' && echo '  → 接受' || echo '  → 拒绝（见上一行原因）'
+          # 只重写 control 的 Package 与 deb 文件名；包内可执行文件、桌面入口
+          # 的显示名（蒙电信产助手.desktop / Name=蒙电信产助手）保持不变。
+          bash scripts/fix-deb-package-name.sh src-tauri/target/release/bundle/deb
+          dpkg-deb -f src-tauri/target/release/bundle/deb/*.deb Package
+
       - name: 生成 SHA-256 摘要清单
         shell: bash
         run: |

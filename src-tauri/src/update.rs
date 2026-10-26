@@ -230,7 +230,9 @@ pub fn package_extension(p: &Pkg) -> &'static str {
         _ => match p.platform.as_str() {
             "macos" => "dmg",
             "windows" => "exe",
-            _ => "bin",
+            // Linux 兜底取 deb：落成通用的 `.bin` 后 `open` 与安装器都认不出，
+            // 而发行版侧我们产出的就是 deb（AppImage 需要 FUSE 且无包元数据）。
+            _ => "deb",
         },
     }
 }
@@ -918,7 +920,8 @@ mod tests {
         // 清单里没有可识别扩展名时，兜底按**清单声明的平台**走，
         // 不按跑测试的这台机器（原先这条在 Linux 上红：夹具的 platform 取
         // std::env::consts::OS，于是 macos 的期望撞上 linux 的兜底）。
-        for (platform, expect) in [("macos", "dmg"), ("windows", "exe"), ("linux", "bin")] {
+        // Linux 兜底是 deb 而非通用的 `.bin`：后者落盘后 open/安装器都识别不了。
+        for (platform, expect) in [("macos", "dmg"), ("windows", "exe"), ("linux", "deb")] {
             let mut noext = manifest_for("0.2.0", "lan://app", 10, &"ab".repeat(32)).packages.remove(0);
             noext.platform = platform.into();
             let path = package_path(&core, "0.2.0", platform, "x86_64", &noext);
