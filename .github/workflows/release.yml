@@ -156,7 +156,7 @@ jobs:
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.rpm
             src-tauri/target/release/bundle/**/*.AppImage
-            src-tauri/target/artifacts-sha256.txt
+            src-tauri/target/release/artifacts-sha256.txt
           if-no-files-found: error
 
 # 触发 GitHub 重新发现本工作流（AUDIT-1026）
