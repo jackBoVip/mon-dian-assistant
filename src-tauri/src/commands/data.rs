@@ -266,10 +266,11 @@ pub fn download_update(app: tauri::AppHandle) -> Result<crate::update::UpdateInf
     crate::update::download(&core, &app)
 }
 
+/// 本版本不静默替换自身：校验通过后把安装包交给系统打开，替换由用户手动作业。
 #[tauri::command]
 pub fn install_update() -> Result<crate::update::UpdateInfo> {
     let core = crate::state::core();
-    crate::update::install(&core)
+    crate::update::open_package(&core)
 }
 
 // —— 浏览器扩展宿主清单 ——

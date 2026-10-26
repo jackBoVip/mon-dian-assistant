@@ -1,7 +1,60 @@
-import type { ThemeStyle } from './types';
+import type { BuiltinThemeStyle, CustomTheme, ThemeStyle } from './types';
+import { buildThemeRule, customThemeId } from './themeTokens';
 
-/** 与 Rust settings::THEME_STYLES 完全一致的字面量（顺序也要一致，选择器按它渲染）。 */
-export const THEME_STYLES: ThemeStyle[] = ['glass', 'minimal', 'obsidian', 'cyber'];
+/** 内置四套：与 Rust settings::THEME_STYLES 完全一致的字面量（顺序也要一致，选择器按它渲染）。
+ *  自定义档不在这里——它们由用户在「界面外观」里新增，id 与令牌都存在库里。 */
+export const THEME_STYLES: BuiltinThemeStyle[] = ['glass', 'minimal', 'obsidian', 'cyber'];
+
+const CUSTOM_STYLE_TAG = 'mda-custom-themes';
+
+/**
+ * 把已存的自定义主题写成一条运行时规则挂进 <head>。
+ *
+ * 为什么是注入而不是编译进 tokens.css：那些值是用户粘的，构建期根本不知道会有什么。
+ * 为什么安全：`buildThemeRule` 只接受白名单令牌名与逐枚校验过的字面量，输出保证是一行、
+ * 只有一对花括号，用户原文从不参与拼接（见 themeTokens.ts）。
+ * 每次整块重建，不做增量——留量最容易出的错是"删掉的主题还在生效"。
+ */
+export function syncCustomThemeStyles(doc: Document, themes: CustomTheme[]): void {
+  const head = doc.head;
+  if (!head) return;
+  let tag = doc.getElementById(CUSTOM_STYLE_TAG);
+  if (!themes.length) {
+    tag?.remove();
+    return;
+  }
+  if (!tag) {
+    tag = doc.createElement('style');
+    tag.id = CUSTOM_STYLE_TAG;
+    head.appendChild(tag);
+  }
+  tag.textContent = themes
+    .map((t) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(t.tokens);
+      } catch {
+        return '';
+      }
+      const partial = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, string>;
+      return buildThemeRule(t.id, partial);
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** 从注入用的那条规则里读回某一档自定义主题的令牌（预览色块要用它自己的颜色）。 */
+export function customThemeTokens(themes: CustomTheme[], style: ThemeStyle): Record<string, string> | null {
+  const id = customThemeId(style);
+  if (!id) return null;
+  const found = themes.find((t) => t.id === id);
+  if (!found) return null;
+  try {
+    return JSON.parse(found.tokens) as Record<string, string>;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * S 轮起只剩一条轴：选哪套主题。四套各自把明暗身份、模糊值、玻璃透明度钉死在自己的

@@ -186,8 +186,17 @@ describe('数据库主密钥降级的显式同意闸门（需求 §4.1）', () =
     await useSession.getState().bootstrap();
     expect(useSession.getState().phase).toBe('login');
     expect(useSession.getState().deviceKeyGate).toBeNull();
-    // 顺序也是被测的东西：失败状态→闸门→外观→状态，一条都不能提前。
-    expect(cmds()).toEqual(['boot_failure_status', 'device_key_consent_status', 'get_theme', 'vault_status', 'login_profile']);
+    // 顺序也是被测的东西：失败状态→闸门→外观（含自定义主题列表）→状态，一条都不能提前。
+    // list_custom_themes 紧跟 get_theme：自定义档的 CSS 是运行时注入的，先拿到当前档却没拿到
+    // 那批规则，切过去的那一帧会闪一下出厂色。
+    expect(cmds()).toEqual([
+      'boot_failure_status',
+      'device_key_consent_status',
+      'get_theme',
+      'list_custom_themes',
+      'vault_status',
+      'login_profile',
+    ]);
   });
 
   it('同意后由后端写文件并装配：重新拉闸门→读取状态→进入主界面', async () => {

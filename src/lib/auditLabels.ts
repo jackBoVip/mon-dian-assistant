@@ -43,6 +43,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'extension.hello': '扩展接入',
   'extension.host_manifest.install': '安装扩展通道清单',
   'extension.host_manifest.uninstall': '卸载扩展通道清单',
+  'lan.serve.disable': '停止提供局域网更新',
+  'lan.serve.enable': '开始提供局域网更新',
+  'lan.update.check': '从局域网检查更新',
   'profile.nickname': '修改自己的昵称',
   'quick_launcher.shortcut.set': '设置启动器快捷键',
   'quick_launcher.view_detail': '从启动器查看详情',
@@ -88,6 +91,7 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   session: '会话',
   setting: '设置项',
   target: '目标',
+  update: '更新通道',
   vault: '保险库',
 };
 

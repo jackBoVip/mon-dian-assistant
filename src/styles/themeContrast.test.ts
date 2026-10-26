@@ -507,14 +507,30 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
 }
 
 const TOKEN_SOURCE = 'src/styles/tokens.css';
+
+/**
+ * 「自定义主题」的令牌模板所在的那一枚文件。它带着 32 个示例值——那是给用户的**模板正文**，
+ * 不是某个组件在硬编码颜色：界面上一处都不读它，它只被复制进粘贴框。
+ *
+ * 这不是"网开一面"：模板里那 32 个值与 tokens.css 的 glass 块逐枚相同这件事，
+ * 由 themeTokens.test.ts 的「出厂那份模板原样粘回来必须过，且示例值与 tokens.css 逐枚相同」钉着。
+ * 漂了那条就红，所以它是被核过的派生物；下面两条守卫另外要求"这枚豁免真的被用到过"，
+ * 免得文件改名之后豁免表空转。
+ */
+const TOKEN_MIRROR_SOURCE = 'src/lib/themeTokens.ts';
 const files = sourceFiles(resolve(process.cwd(), 'src'));
 
 describe('配色来源唯一（需求 line 246「不得在每个组件中硬编码颜色」）', () => {
   it('除 tokens.css 外，任何源文件都不出现字面色值', () => {
     const literal = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(/;
     const hits: string[] = [];
+    let mirrorUsed = false;
     for (const f of files) {
       if (f.endsWith(TOKEN_SOURCE)) continue;
+      if (f.endsWith(TOKEN_MIRROR_SOURCE)) {
+        mirrorUsed = literal.test(readFileSync(f, 'utf8'));
+        continue;
+      }
       readFileSync(f, 'utf8')
         .split('\n')
         .forEach((line, i) => {
@@ -522,6 +538,7 @@ describe('配色来源唯一（需求 line 246「不得在每个组件中硬编�
         });
     }
     expect(hits).toEqual([]);
+    expect(mirrorUsed, `${TOKEN_MIRROR_SOURCE} 的豁免登记了却没再出现字面值——要么改名了要么模板已删，请把这条豁免撤掉`).toBe(true);
   });
 
   it('组件与样式层引用的每个令牌都已声明，不留悬空 var()', () => {
@@ -600,7 +617,12 @@ describe('配色来源唯一（需求 line 246「不得在每个组件中硬编�
       for (let i = 0; i < lines.length; i++) {
         if (!danger.test(lines[i]) || variantMapEntry.test(lines[i])) continue;
         const around = lines.slice(Math.max(0, i - 2), Math.min(lines.length, i + 3)).join('\n');
-        expect(ctx.test(around) || f.endsWith('global.css'), `${f}:${i + 1} 引用了危险色但上下文看不出危险语义`).toBe(true);
+        // global.css 里那一档是危险色的**定义处**；模板文件里那一枚是令牌名与示例值（界面不读它），
+        // 两处都不是"把危险色用在某个界面上"，所以按语义判定的这条不套它们。
+        expect(
+          ctx.test(around) || f.endsWith('global.css') || f.endsWith(TOKEN_MIRROR_SOURCE),
+          `${f}:${i + 1} 引用了危险色但上下文看不出危险语义`,
+        ).toBe(true);
         checked.push(`${f}:${i + 1}`);
       }
     }

@@ -53,15 +53,39 @@ export const TYPE_FILTERS: Array<{ key: 'all' | KnownTargetType; label: string }
   { key: 'generic_secret', label: '其他' },
 ]
 
-// —— 主题（与 Rust settings::THEME_STYLES 字面量完全一致；S 轮起只有原型那四套） ——
+// —— 主题（内置四套与 Rust settings::THEME_STYLES 字面量完全一致；S 轮起只有原型那四套） ——
 // 明暗身份由主题本身携带，不再有 AppearanceMode 轴，也没有玻璃强度滑杆。
-export type ThemeStyle = 'glass' | 'minimal' | 'obsidian' | 'cyber'
+// 0012 起还有一类**自定义档**：`custom-<id>`，令牌表存在 custom_themes 里、运行时注入成
+// [data-theme="custom-<id>"] 一条规则。它们不在这份标签表里（那是编译期的四套），名字随用户起。
+export type BuiltinThemeStyle = 'glass' | 'minimal' | 'obsidian' | 'cyber'
+export type ThemeStyle = BuiltinThemeStyle | `custom-${string}`
 
-export const THEME_LABELS: Record<ThemeStyle, string> = {
+export const CUSTOM_THEME_PREFIX = 'custom-'
+
+export const BUILTIN_THEME_LABELS: Record<BuiltinThemeStyle, string> = {
   glass: '极光液态',
   minimal: '极简纯白',
   obsidian: '曜石暗夜',
   cyber: '赛博霓虹',
+}
+
+export function isBuiltinThemeStyle(v: string): v is BuiltinThemeStyle {
+  return v in BUILTIN_THEME_LABELS
+}
+
+/** 后端返回的一档主题：id 是表主键（不含 custom- 前缀），tokens 是已校验的 JSON 对象串。 */
+export interface CustomTheme {
+  id: string
+  name: string
+  tokens: string
+}
+
+export function customThemeStyle(id: string): ThemeStyle {
+  return `${CUSTOM_THEME_PREFIX}${id}` as ThemeStyle
+}
+
+export function customThemeId(style: string): string | null {
+  return style.startsWith(CUSTOM_THEME_PREFIX) ? style.slice(CUSTOM_THEME_PREFIX.length) : null
 }
 
 // —— 错误形状（AppError 序列化：code/message/detail；前端本地错误可能不带 detail） ——
@@ -746,7 +770,40 @@ export interface UpdateInfo {
   available: boolean
   downloaded: boolean
   installed: boolean
+  /** 从局域网源拉取时为「主机名（http://ip:port）」，HTTPS 通道为 null */
+  lanSource: string | null
+  /** 是否已把安装包交给系统打开（本版本不静默替换自身） */
+  opened: boolean
   message: string
+}
+
+/** lan::LanSourceView：组播发现到的同网段更新源 */
+export interface LanSourceView {
+  instance: string
+  host: string
+  ip: string
+  version: string
+  platform: string
+  arch: string
+  port: number
+  /** 源版本高于本机；false 时界面必须禁用「从局域网更新」，绝不降级 */
+  newerThanLocal: boolean
+}
+
+/** lan::LanStatus（lan_status / lan_set_serve 返回） */
+export interface LanStatus {
+  discoveryEnabled: boolean
+  /** 组播监听失败原因；非空即代表只能用手填地址 */
+  discoveryError: string | null
+  /** 发现线程已运行毫秒数：区分「还在扫描」与「确实没有源」 */
+  elapsedMs: number
+  sources: LanSourceView[]
+  serving: boolean
+  servePort: number | null
+  serveDir: string | null
+  serveError: string | null
+  manualSource: string | null
+  localVersion: string
 }
 
 /** data::extension_host_status 返回（ready  true/false 两分支的联合） */

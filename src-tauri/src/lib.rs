@@ -16,6 +16,7 @@ pub mod error;
 pub mod fill_host;
 pub mod importexport;
 pub mod ipc;
+pub mod lan;
 pub mod launcher;
 pub mod menu;
 pub mod quick_launcher;
@@ -298,6 +299,8 @@ pub fn finish_boot(app: &tauri::AppHandle, data_dir: PathBuf, db_key: SecretByte
     if let Err(e) = ipc::start(core.clone()) {
         log::warn!("本机通道未启动：{}", e.code());
     }
+    // 局域网更新通道：发现线程常驻；托管服务仅在开关打开时监听
+    lan::start(&core);
     // 启动器窗口预先创建（隐藏），保证快捷键第一下就能唤起
     let _ = launcher::ensure_window(app);
     if let Some(accel) = launcher::bootstrap(app, &core) {
@@ -334,6 +337,10 @@ pub(crate) const DEFAULT_SETTINGS: &[(&str, &str)] = &[
     ("update_channel", "stable"),
     ("update_source_url", ""),
     ("extension_id", ""),
+    ("lan_discovery_enabled", "true"),
+    ("lan_serve_enabled", "false"),
+    ("lan_serve_dir", ""),
+    ("lan_manual_source", ""),
 ];
 
 fn sleep_gap_detected(wall_gap_secs: u64, tick_secs: u64) -> bool {
@@ -516,6 +523,9 @@ pub fn run() {
             commands::system::get_theme,
             commands::system::set_theme,
             commands::system::set_reduce_motion,
+            commands::system::list_custom_themes,
+            commands::system::add_custom_theme,
+            commands::system::delete_custom_theme,
             commands::system::security_status,
             commands::system::list_audit_events,
             commands::system::create_backup,
@@ -537,11 +547,16 @@ pub fn run() {
             commands::data::extension_host_status,
             commands::data::extension_host_install,
             commands::data::extension_host_uninstall,
+            commands::lan::lan_status,
+            commands::lan::lan_set_serve,
+            commands::lan::lan_check,
+            commands::lan::lan_download,
         ])
         .build(tauri::generate_context!())
         .expect("启动失败：无法构建应用")
         .run(move |app, event| match event {
             RunEvent::Exit => {
+                lan::stop();
                 if let Some(core) = app.try_state::<SharedCore>() {
                     core.lock_connections();
                     ipc::remove_channel_file(&core.data_dir);
@@ -776,10 +791,11 @@ mod tests {
     fn factory_defaults_match_migration_sql() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations");
         let sql = format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n{}\n{}",
             std::fs::read_to_string(dir.join("0002_seed.sql")).unwrap(),
             std::fs::read_to_string(dir.join("0003_policy_defaults.sql")).unwrap(),
-        std::fs::read_to_string(dir.join("0004_extension_id_setting.sql")).unwrap(),
+            std::fs::read_to_string(dir.join("0004_extension_id_setting.sql")).unwrap(),
+            std::fs::read_to_string(dir.join("0013_lan_update.sql")).unwrap(),
         );
         for (k, v) in DEFAULT_SETTINGS {
             let spaced = format!("('{k}', '{v}'");

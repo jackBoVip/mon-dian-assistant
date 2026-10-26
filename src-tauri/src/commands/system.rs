@@ -9,9 +9,9 @@ use crate::settings;
 use crate::state::AppCore;
 use serde::{Deserialize, Serialize};
 
-/// 主题风格清单的唯一来源在 settings（写入校验也在那里）；这里只引用，避免两份列表漂移。
-const THEME_STYLES: &[&str] = settings::THEME_STYLES;
-
+/// 主题风格清单与写入校验的唯一来源在 settings（0012 起还要查自定义主题表），
+/// 所以这里不再引一份列表——引了就会漂。
+///
 /// 外观读取视图：S 轮起只有"哪套风格"与"是否减少动态效果"两枚——明暗身份由风格携带，
 /// 玻璃强度由各套主题自己钉死，所以 mode / glassIntensity 随旧主题集合一起作废。
 #[derive(Serialize)]
@@ -114,6 +114,10 @@ pub(crate) const UPDATABLE_SETTINGS: &[&str] = &[
         "update_channel",
         "update_source_url",
         "extension_id",
+        "lan_discovery_enabled",
+        "lan_serve_enabled",
+        "lan_serve_dir",
+        "lan_manual_source",
     ];
 
 /// 管理员更新安装级设置。白名单校验键名与取值，避免前端任意写入设置表。
@@ -126,7 +130,7 @@ pub fn update_setting(key: String, value: String) -> Result<()> {
     if !ALLOWED.contains(&key.as_str()) {
         return Err(AppError::InvalidInput);
     }
-    let v = value.trim();
+    let mut v = value.trim().to_string();
     let numeric_ok = matches!(
         key.as_str(),
         "session_idle_timeout_minutes"
@@ -153,8 +157,10 @@ pub fn update_setting(key: String, value: String) -> Result<()> {
         "quick_launcher_show_recent",
         "quick_launcher_rank_recent_favorite",
         "quick_launcher_fill_enabled",
+        "lan_discovery_enabled",
+        "lan_serve_enabled",
     ];
-    if BOOL_KEYS.contains(&key.as_str()) && !matches!(v, "true" | "false") {
+    if BOOL_KEYS.contains(&key.as_str()) && !matches!(v.as_str(), "true" | "false") {
         return Err(AppError::InvalidInput);
     }
     if key == "master_password_min_length" {
@@ -165,20 +171,29 @@ pub fn update_setting(key: String, value: String) -> Result<()> {
             return Err(AppError::InvalidInput);
         }
     }
-    if key == "update_source_url" && !v.is_empty() {
-        let is_https = v.starts_with("https://");
-        if !is_https {
-            return Err(AppError::InsecureUpdateSource);
-        }
+    if key == "update_source_url" && !v.is_empty() && !crate::update::is_allowed_update_url(&v) {
+        return Err(AppError::InsecureUpdateSource);
     }
-    if key == "extension_id" && !v.is_empty() && !crate::fill_host::is_valid_extension_id(v) {
+    // 手工局域网源允许写成 `10.0.0.5:8765`，存库前补全成 `http://10.0.0.5:8765`。
+    if key == "lan_manual_source" && !v.is_empty() {
+        v = crate::update::normalize_lan_source(&v).ok_or(AppError::InsecureUpdateSource)?;
+    }
+    if key == "lan_serve_dir" && !v.is_empty() && !std::path::Path::new(&v).is_dir() {
+        return Err(AppError::InvalidInput);
+    }
+    if key == "extension_id" && !v.is_empty() && !crate::fill_host::is_valid_extension_id(&v) {
         // 清单里的 allowed_origins 精确到扩展 ID：写错一位等于填充通道对任何扩展都失效或错放。
         return Err(AppError::InvalidInput);
     }
-    if key == "update_channel" && !matches!(v, "stable" | "beta") {
+    if key == "update_channel" && !matches!(v.as_str(), "stable" | "beta") {
         return Err(AppError::InvalidInput);
     }
-    settings::set(&core.db, &key, v, "install")?;
+    settings::set(&core.db, &key, &v, "install")?;
+    // 局域网开关写库后立即生效：托管目录变了要重启服务，开关变了要起停监听。
+    // 失败不回滚设置（开关已是管理员意图），真实错误由 `lan_status.serveError` 报给界面。
+    if key.starts_with("lan_") {
+        crate::lan::sync(&core);
+    }
     audit(&core, Some(&user), "system.setting.update", Some("setting"), Some(&key), true, None, "app");
     Ok(())
 }
@@ -205,7 +220,9 @@ pub fn set_theme(style: String) -> Result<()> {
     // 与 get_theme 同一道闸门：首启页（保险库还没建）与密钥同意页都可能在装配前后调这里，
     // 用 state::core() 会在未装配时 panic，release 下就是带着没关的连接一起 abort。
     let core = crate::state::core_or_await_consent()?;
-    if !THEME_STYLES.contains(&style.as_str()) {
+    // 内置四套之外还接受表里存在的 `custom-<id>`（0012 起的自定义主题）。
+    // 校验整个交给 settings::theme_style_is_known——那里是唯一事实来源，这里再抄一份枚举就会漂。
+    if !settings::theme_style_is_known(&core.db, &style)? {
         return Err(AppError::InvalidInput);
     }
     match core.vault.active_user() {
@@ -224,6 +241,30 @@ pub fn set_reduce_motion(enabled: bool) -> Result<()> {
     settings::set(&core.db, "reduce_motion", if enabled { "true" } else { "false" }, "install")?;
     let _ = user;
     Ok(())
+}
+
+/// 自定义主题列表（0012）。与主题读写同一档：外观不属于秘密数据，未解锁也可读，
+/// 所以认证屏那六屏也认得用户自己加的档。
+#[tauri::command]
+pub fn list_custom_themes() -> Result<Vec<settings::CustomTheme>> {
+    let core = crate::state::core_or_await_consent()?;
+    settings::list_custom_themes(&core.db)
+}
+
+/// 新增一档自定义主题。`tokens` 是**已在前端逐枚校验过**的扁平 JSON 对象；
+/// settings 侧会再按白名单与字面形状过一遍，不合规直接拒，库里从不存用户原文。
+#[tauri::command]
+pub fn add_custom_theme(id: String, name: String, tokens: String) -> Result<()> {
+    let core = crate::state::core_or_await_consent()?;
+    settings::add_custom_theme(&core.db, &id, &name, &tokens)
+}
+
+/// 删一档自定义主题。正选用它时 settings 侧会把那一条偏好归回 `glass`，
+/// 不会留下一个"存着却查不到 CSS"的主题值。
+#[tauri::command]
+pub fn delete_custom_theme(id: String) -> Result<()> {
+    let core = crate::state::core_or_await_consent()?;
+    settings::delete_custom_theme(&core.db, &id)
 }
 
 #[tauri::command]

@@ -10,6 +10,7 @@ use crate::db::repo::now;
 use crate::db::Db;
 use crate::error::Result;
 use rusqlite::{params, OptionalExtension};
+use serde::Serialize;
 
 pub fn get(db: &Db, key: &str) -> Result<Option<String>> {
     let conn = db.lock_conn();
@@ -65,13 +66,13 @@ pub fn theme_for(db: &Db, user_id: &str) -> Result<String> {
     let raw = get_user_pref(db, user_id, "theme_style")?
         .or(get(db, "theme_style")?)
         .unwrap_or_else(|| "glass".into());
-    // 读到的值不在枚举内（旧库残留、手工改库）时按默认档处理，绝不让一个 tokens.css
-    // 里没有的名字进界面——那等于整套变量取不到值，界面退回浏览器默认色。
-    Ok(if THEME_STYLES.contains(&raw.as_str()) {
-        raw
+    // 读到的值不在枚举内、也不是表里存在的自定义档（旧库残留、手工改库、主题被删）时按默认档处理，
+    // 绝不让一个 tokens.css 里没有的名字进界面——那等于整套变量取不到值，界面退回浏览器默认色。
+    if theme_style_is_known(db, &raw)? {
+        Ok(raw)
     } else {
-        "glass".into()
-    })
+        Ok("glass".into())
+    }
 }
 
 /// 主题风格的唯一事实来源：选择器（commands::system::THEME_STYLES）、校验（set_theme）
@@ -80,10 +81,176 @@ pub fn theme_for(db: &Db, user_id: &str) -> Result<String> {
 ///
 /// S 轮（2026-10-18）：这套枚举整体换成交付方原型里的四套界面风格，
 /// 上一轮的八套（含高对比度无障碍兜底）作废；库里的旧值由迁移 0006 归一到 `glass`。
+///
+/// 0012 起还有一类**自定义档**：`custom-<id>`，id 必须在 custom_themes 表里存在。
+/// 它们不在这个枚举里（枚举配的是 tokens.css 里编译期就写死的那四套），
+/// 校验走 `theme_style_is_known`。
 pub const THEME_STYLES: &[&str] = &["glass", "minimal", "obsidian", "cyber"];
 
+/// 自定义主题允许出现的令牌名。必须与 tokens.css 的 `[data-theme="glass"]` 块、
+/// 以及前端 `src/lib/themeTokens.ts` 的 THEME_TOKEN_NAMES 三方一致（配对关系由
+/// ipcContract.test.ts 那条守卫核，缺一名或多一名都红）。
+pub const THEME_TOKEN_NAMES: &[&str] = &[
+    "--t-primary",
+    "--t-primary-hover",
+    "--t-primary-glow",
+    "--t-text",
+    "--t-text-body",
+    "--t-text-muted",
+    "--t-text-inverse",
+    "--t-on-primary-muted",
+    "--t-danger",
+    "--t-success",
+    "--t-success-soft",
+    "--t-warning",
+    "--t-star",
+    "--t-accent",
+    "--t-surface",
+    "--t-surface-elevated",
+    "--t-surface-sunken",
+    "--t-border",
+    "--t-border-subtle",
+    "--t-border-strong",
+    "--t-divider",
+    "--row-hover",
+    "--t-bg",
+    "--blob-1",
+    "--blob-2",
+    "--blob-3",
+    "--blur",
+    "--blur-overlay",
+    "--shadow-dropdown",
+    "--shadow-btn",
+    "--shadow-sm",
+    "--glow-inset",
+];
+
+/// 自定义主题的 id 形状：它会拼进 `[data-theme="custom-…"]` 选择器，所以只收小写字母、
+/// 数字与连字符，且必须以字母或数字开头。
+pub fn custom_theme_id_is_valid(id: &str) -> bool {
+    let b = id.as_bytes();
+    (2..=32).contains(&b.len())
+        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+}
+
+/// 令牌值的注入闸门。语法级的严格校验在前端做（它会逐枚报行号与原因），这一层守的是
+/// "就算前端被绕过、请求直接打进来，落库的值也拼不出 `}` / `<` / `url(` / `@import` 这些形状"。
+/// 允许的字符恰好覆盖四套主题里出现过的全部字面量：#hex、rgb()/rgba()、var()、blur()、
+/// 阴影的数值与单位、transparent 这类关键字。
+fn token_value_is_safe(v: &str) -> bool {
+    !v.is_empty()
+        && v.len() <= 160
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '#' | '%' | '(' | ')' | ',' | '.' | ' ' | '-'))
+}
+
+/// 令牌 JSON 必须是 { 白名单名: 安全字面量 } 的扁平对象，至少一枚、至多整套。
+/// 通过时返回规范化后的 (名, 值) 列表。
+fn normalize_theme_tokens(tokens_json: &str) -> Option<Vec<(String, String)>> {
+    let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_str(tokens_json).ok()?;
+    // 整套齐全是硬条件：`:root` 里没有这些令牌的默认值，缺一枚就意味着那一档下某个 var() 取不到值。
+    // 前端已经按行号报过一遍，这里再守一次——请求直接打进来时不能靠前端把关。
+    if parsed.len() != THEME_TOKEN_NAMES.len() || !THEME_TOKEN_NAMES.iter().all(|n| parsed.contains_key(*n)) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(parsed.len());
+    for (k, v) in parsed {
+        if !THEME_TOKEN_NAMES.contains(&k.as_str()) {
+            return None;
+        }
+        let Some(s) = v.as_str() else { return None };
+        if !token_value_is_safe(s) {
+            return None;
+        }
+        out.push((k, s.to_string()));
+    }
+    Some(out)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomTheme {
+    pub id: String,
+    pub name: String,
+    /// 规范化之后的 JSON 对象串（键已核过白名单、值已核过字面形状）。
+    pub tokens: String,
+}
+
+pub fn list_custom_themes(db: &Db) -> Result<Vec<CustomTheme>> {
+    let conn = db.lock_conn();
+    let mut stmt = conn.prepare("SELECT id, name, tokens FROM custom_themes ORDER BY created_at, id")?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(CustomTheme {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                tokens: r.get(2)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn custom_theme_exists(db: &Db, id: &str) -> Result<bool> {
+    let conn = db.lock_conn();
+    Ok(conn
+        .query_row("SELECT 1 FROM custom_themes WHERE id=?1", params![id], |_| Ok(true))
+        .optional()?
+        .is_some())
+}
+
+/// 新增一档自定义主题。`tokens_json` 不合规直接拒（InvalidInput），库里从不存用户原文。
+pub fn add_custom_theme(db: &Db, id: &str, name: &str, tokens_json: &str) -> Result<()> {
+    if !custom_theme_id_is_valid(id) {
+        return Err(crate::error::AppError::InvalidInput);
+    }
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 24 {
+        return Err(crate::error::AppError::InvalidInput);
+    }
+    let Some(tokens) = normalize_theme_tokens(tokens_json) else {
+        return Err(crate::error::AppError::InvalidInput);
+    };
+    // 重新序列化一遍：落库的是规范化后的那份，不是收到的那串
+    let canonical = serde_json::to_string(&tokens.into_iter().collect::<std::collections::BTreeMap<_, _>>())
+        .map_err(|_| crate::error::AppError::Internal)?;
+    let conn = db.lock_conn();
+    conn.execute(
+        "INSERT INTO custom_themes (id,name,tokens,created_at) VALUES (?1,?2,?3,?4)
+         ON CONFLICT(id) DO UPDATE SET name=excluded.name, tokens=excluded.tokens, created_at=excluded.created_at",
+        params![id, name, canonical, now()],
+    )?;
+    Ok(())
+}
+
+/// 删一档自定义主题。若当前正选用它，调用方负责先切回内置档——这里把它一并归一到 glass，
+/// 免得留下一个"存着却查不到 CSS"的主题值（那等于整套 var() 取不到值）。
+pub fn delete_custom_theme(db: &Db, id: &str) -> Result<()> {
+    if !custom_theme_id_is_valid(id) {
+        return Err(crate::error::AppError::InvalidInput);
+    }
+    let style = format!("custom-{id}");
+    let conn = db.lock_conn();
+    conn.execute("DELETE FROM custom_themes WHERE id=?1", params![id])?;
+    conn.execute("UPDATE app_settings SET value='glass' WHERE key='theme_style' AND value=?1", params![style])?;
+    conn.execute("UPDATE user_preferences SET value='glass' WHERE key='theme_style' AND value=?1", params![style])?;
+    Ok(())
+}
+
+/// 主题值是否可用：内置四套，或表里真的存在的 `custom-<id>`。
+pub fn theme_style_is_known(db: &Db, style: &str) -> Result<bool> {
+    if THEME_STYLES.contains(&style) {
+        return Ok(true);
+    }
+    match style.strip_prefix("custom-") {
+        Some(id) => Ok(custom_theme_id_is_valid(id) && custom_theme_exists(db, id)?),
+        None => Ok(false),
+    }
+}
+
 pub fn set_theme(db: &Db, user_id: &str, style: &str) -> Result<()> {
-    if !THEME_STYLES.contains(&style) {
+    if !theme_style_is_known(db, style)? {
         return Err(crate::error::AppError::InvalidInput);
     }
     set_user_pref(db, user_id, "theme_style", style)
@@ -92,7 +259,7 @@ pub fn set_theme(db: &Db, user_id: &str, style: &str) -> Result<()> {
 /// 还没有使用者时的外观写入：落在安装级，`theme_for` 与 `get_theme` 都会读回来。
 /// 首启页（保险库尚未创建）与锁定中的界面用它把用户选的主题留住，重启不丢。
 pub fn set_theme_install(db: &Db, style: &str) -> Result<()> {
-    if !THEME_STYLES.contains(&style) {
+    if !theme_style_is_known(db, style)? {
         return Err(crate::error::AppError::InvalidInput);
     }
     set(db, "theme_style", style, "ui")
@@ -195,5 +362,91 @@ mod tests {
                 "{style} 在 tokens.css 中没有 [data-theme] 变量块，切换后界面不会有任何视觉变化"
             );
         }
+    }
+
+    /// 自定义主题的令牌白名单必须与 tokens.css 的 glass 块成对：缺失 0 且陈旧 0。
+    /// 只写"我们列了 32 枚"不算——名单会漂，漂了就有令牌存得进来却没有对应 CSS，
+    /// 或者 CSS 里有、用户却永远填不了。
+    #[test]
+    fn theme_token_whitelist_matches_tokens_css_both_directions() {
+        let css = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/styles/tokens.css"))
+            .expect("需要能读到前端 tokens.css");
+        let block = css
+            .split("[data-theme=\"glass\"]")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("tokens.css 里得有 [data-theme=\"glass\"] 块");
+        let real: Vec<String> = block
+            .lines()
+            .filter_map(|l| Some(l.trim().strip_prefix("--")?))
+            .filter_map(|l| l.split(':').next().map(|n| format!("--{n}")))
+            .map(|s| s.trim().to_string())
+            .collect();
+        let missing: Vec<&String> = real.iter().filter(|n| !THEME_TOKEN_NAMES.contains(&n.as_str())).collect();
+        let stale: Vec<String> = THEME_TOKEN_NAMES
+            .iter()
+            .filter(|n| !real.iter().any(|r| r == *n))
+            .map(|n| n.to_string())
+            .collect();
+        assert!(missing.is_empty(), "tokens.css 里有、白名单里没有（缺失）：{missing:?}");
+        assert!(stale.is_empty(), "白名单里有、tokens.css 里没有（陈旧）：{stale:?}");
+        assert!(real.len() >= 30, "glass 块只解析出 {} 枚，解析本身大概是坏的", real.len());
+    }
+
+    /// 自定义档：存进去之后 set_theme 才认，删掉之后 theme_for 必须回退到 glass，
+    /// 绝不能留着一个"查不到 CSS"的 data-theme 值。
+    /// 一整套合法令牌（值取自 THEME_TOKEN_NAMES 的顺序，覆盖项按需替换）。
+    /// 与前端那份夹具一样不手抄 tokens.css 的色值——这里要证的不是颜色对不对，是形状过不过关。
+    fn full_tokens_json(overrides: &[(&str, &str)]) -> String {
+        let mut map = std::collections::BTreeMap::new();
+        for name in THEME_TOKEN_NAMES {
+            let value = overrides
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| *v)
+                .unwrap_or("red");
+            map.insert(*name, value);
+        }
+        serde_json::to_string(&map).unwrap()
+    }
+
+    #[test]
+    fn custom_theme_roundtrip_gates_set_theme_and_falls_back_on_delete() {
+        let d = db();
+        seed_users(&d, &["u1"]);
+        // 值里带 # 的 JSON 要用 r##"…"##：r#"…"# 会在 `"#` 处被提前截断
+        let tokens = full_tokens_json(&[("--t-primary", "#0e6ba8"), ("--t-bg", "#eef4f8")]);
+        add_custom_theme(&d, "sea", "海盐蓝", &tokens).unwrap();
+
+        assert!(theme_style_is_known(&d, "custom-sea").unwrap());
+        set_theme(&d, "u1", "custom-sea").unwrap();
+        assert_eq!(theme_for(&d, "u1").unwrap(), "custom-sea");
+        // 列表里读回来的是规范化后的那份，键序稳定
+        let listed = list_custom_themes(&d).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "海盐蓝");
+        assert_eq!(listed[0].tokens, full_tokens_json(&[("--t-primary", "#0e6ba8"), ("--t-bg", "#eef4f8")]));
+
+        delete_custom_theme(&d, "sea").unwrap();
+        assert!(!theme_style_is_known(&d, "custom-sea").unwrap());
+        assert_eq!(theme_for(&d, "u1").unwrap(), "glass", "删掉正在用的自定义档后必须回退，不能留空引用");
+    }
+
+    /// 写入侧的注入闸门：id 形状、令牌名白名单、值的字面形状，三样各拒一次。
+    /// 前端已经报过行号了，这一层守的是"请求直接打进来"这条路。
+    #[test]
+    fn custom_theme_write_rejects_bad_id_unknown_token_and_injection_shaped_value() {
+        let d = db();
+        assert!(add_custom_theme(&d, "../x", "坏 id", r##"{"--t-primary":"#fff"}"##).is_err());
+        assert!(add_custom_theme(&d, "ok1", "不在白名单", r##"{"--t-nonsense":"#fff"}"##).is_err());
+        assert!(add_custom_theme(&d, "ok2", "非字符串值", r#"{"--t-primary":123}"#).is_err());
+        assert!(add_custom_theme(&d, "ok3", "空对象", "{}").is_err());
+        // 只给一枚（哪怕值都合法）也不收：半套规则进界面比不进去更糟
+        assert!(add_custom_theme(&d, "ok3b", "半套", r#"{"--t-primary":"red"}"#).is_err());
+        // 值里带 } 与 < 是 CSS 注入的两条主路，必须挡在落库之前
+        assert!(add_custom_theme(&d, "ok4", "闭合大括号", r#"{"--t-primary":"red}body{display:none"}"#).is_err());
+        assert!(add_custom_theme(&d, "ok5", "尖括号", r##"{"--t-primary":"#fff<img src=x>"}"##).is_err());
+        assert!(add_custom_theme(&d, "ok6", "url 函数", r#"{"--t-bg":"url(http://a/b)"}"#).is_err());
+        assert!(list_custom_themes(&d).unwrap().is_empty(), "被拒的都不该留在表里");
     }
 }

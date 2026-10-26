@@ -20,6 +20,7 @@ export const PERM = {
   SYS_BACKUP_MANAGE: 'system.backup.manage',
   SYS_UPDATE_CONFIG: 'system.update.config',
   SYS_UPDATE_INSTALL: 'system.update.install',
+  SYS_UPDATE_SERVE: 'system.update.serve',
 } as const;
 
 export type PermKey = (typeof PERM)[keyof typeof PERM];

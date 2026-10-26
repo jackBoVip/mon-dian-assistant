@@ -630,6 +630,126 @@ h3 {
 .theme-preview[data-preview='cyber'] {
   background: var(--preview-cyber);
 }
+
+/* ---------------------------------------------------------------- 界面外观页
+ * 主题卡、小样、令牌粘贴区。只有这一屏用。
+ * 一条硬规矩：这里**一个色面值都不写**——小样靠 `data-theme` 挂在它自己身上，
+ * 于是那一套的令牌就在它子树里生效（自定义档的规则是运行时注入的，同样命中）。
+ * 换句话说预览与实装之间没有第二份真相，也就不可能漂。 */
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: var(--spacing-3);
+  text-align: left;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-md);
+  background: var(--t-surface);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-duration-hover) var(--motion-ease),
+    background-color var(--motion-duration-hover) var(--motion-ease);
+}
+.theme-card:hover {
+  border-color: var(--t-border-strong);
+}
+/* 选中档：主色描边 + 主色染色面，与浮层结果行选中档（AG 二批）同一条口径，
+ * 不再为某一版底色另写一套反相。 */
+.theme-card.is-active {
+  border-color: var(--t-primary);
+  background: color-mix(in srgb, var(--t-primary) 14%, transparent);
+}
+.theme-face {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 58px;
+  overflow: hidden;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-bg);
+}
+.theme-face--wide {
+  height: 66px;
+}
+.theme-face-bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 13px;
+  background: var(--t-surface-elevated);
+}
+.theme-face-line {
+  position: absolute;
+  top: 24px;
+  right: 26px;
+  left: 10px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--t-text) 32%, transparent);
+}
+.theme-face-line--short {
+  top: 36px;
+  right: 62%;
+}
+.theme-face-cta {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 28px;
+  height: 13px;
+  border-radius: var(--radius-full);
+  background: var(--t-primary);
+}
+.theme-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2);
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+}
+.theme-row.is-active {
+  border-color: var(--t-primary);
+}
+/* 芯片档：与卡片里那幅大图同一条规则，只是缩到 38×24。
+ * 用在两处——「当前主题」那枚指标与已有列表的每一行。不这么写的话它会按 width:100% 抢满整行，
+ * 把旁边的名字挤成"海…"（真机截图上就是这个坏法）。 */
+.theme-face--chip {
+  width: 38px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+.theme-errors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  max-height: 150px;
+  padding: var(--spacing-2) var(--spacing-3);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--t-danger);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface-sunken);
+  color: var(--t-danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.theme-errors li {
+  display: flex;
+  gap: var(--spacing-2);
+  min-width: 0;
+}
+/* 令牌粘贴框：等宽、能纵向拉伸，字号比正文小一档（一屏要看得下十几行）。 */
+.theme-tokens {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  resize: vertical;
+}
 /* 勾形：原型用 opacity 0/1 常驻占位，这里勾是选中才渲染进 DOM，所以颜色与尺寸照抄、
  * 不做透明度分支。选中那一行本身另有重量（字重 + 凹面，见下面 aria-checked）。 */
 .check-icon {
@@ -2278,7 +2398,7 @@ h3 {
 }
 
 .launcher-kpi-label {
-  color: var(--t-text-muted);
+  color: var(--t-text-body);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.04em;

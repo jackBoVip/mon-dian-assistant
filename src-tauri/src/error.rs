@@ -81,6 +81,8 @@ pub enum AppError {
     UpdatePlatformMismatch,
     #[error("更新源不可达")]
     UpdateSourceUnreachable,
+    #[error("同一网段内没有发现可用的更新源")]
+    LanSourceUnavailable,
     /// 审查 F14：原先清单 JSON 解析失败被映射成 `UpdateSourceUnreachable`——
     /// 源明明连上了，报出来的却是"连不上"，排障方向整个反了。
     #[error("更新清单无法解析：请核对 sourceUrl 指向的是本应用约定的 JSON 清单")]
@@ -169,6 +171,7 @@ impl AppError {
             AppError::UpdateSignatureInvalid => "UPDATE_SIGNATURE_INVALID",
             AppError::UpdatePlatformMismatch => "UPDATE_PLATFORM_MISMATCH",
             AppError::UpdateSourceUnreachable => "UPDATE_SOURCE_UNREACHABLE",
+            AppError::LanSourceUnavailable => "LAN_SOURCE_UNAVAILABLE",
             AppError::UpdateManifestInvalid => "UPDATE_MANIFEST_INVALID",
             AppError::InsecureUpdateSource => "INSECURE_UPDATE_SOURCE",
             AppError::QuerySyntax(_) => "QUERY_SYNTAX",

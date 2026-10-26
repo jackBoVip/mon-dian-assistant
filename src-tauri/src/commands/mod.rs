@@ -12,6 +12,7 @@ pub mod accounts;
 pub mod boot;
 pub mod data;
 pub mod devicekey;
+pub mod lan;
 pub mod launcher;
 pub mod menus;
 pub mod rbac;

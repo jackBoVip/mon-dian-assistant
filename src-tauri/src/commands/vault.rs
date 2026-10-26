@@ -71,7 +71,7 @@ pub fn vault_initialize(nickname: String, password: String) -> Result<AppStatus>
 /// 首启页按原型重绘后没有昵称输入框：昵称取本机设备名。
 /// 依次试环境变量与 `hostname` 命令，都拿不到就退回中性常量。
 /// 只在建库那一次跑，绝不参与密钥派生，也不写进日志正文。
-fn device_label() -> String {
+pub(crate) fn device_label() -> String {
     let from_env = ["COMPUTERNAME", "HOSTNAME", "NODE_NAME"]
         .iter()
         .find_map(|k| std::env::var(k).ok())

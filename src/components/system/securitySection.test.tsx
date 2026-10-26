@@ -106,6 +106,10 @@ const BASE: Record<string, string> = {
   allow_insecure_protocols: 'false',
   update_channel: 'stable',
   update_source_url: '',
+  lan_discovery_enabled: 'true',
+  lan_serve_enabled: 'false',
+  lan_serve_dir: '',
+  lan_manual_source: '',
   extension_id: '',
   quick_launcher_enabled: 'true',
   quick_launcher_show_recent: 'true',
@@ -203,7 +207,7 @@ describe('中文名与开关：键名、true/false 都不上屏', () => {
     expect(screen.queryByRole('button', { name: '保存' })).toBeNull();
   });
 
-  it('只画白名单里的 21 项，主题/外观/快捷键那几行不出现', async () => {
+  it('只画白名单里的全部 25 项，主题/外观/快捷键那几行不出现', async () => {
     const { section } = await renderSettings();
     expect(within(section).getAllByRole('listitem')).toHaveLength(SETTING_SPECS.length);
     for (const key of ['theme_style', 'reduce_motion', 'quick_launcher_accelerator']) {

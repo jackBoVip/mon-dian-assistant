@@ -29,6 +29,7 @@ import type {
   ItemDetail,
   ItemView,
   KeystoreDiagnostics,
+  LanStatus,
   LauncherPreferences,
   LauncherShortcutStatus,
   LoginProfile,
@@ -51,6 +52,7 @@ import type {
   TargetRow,
   ThemeStyle,
   ThemeView,
+  CustomTheme,
   UpdateInfo,
   VaultStats,
 } from './types';
@@ -211,6 +213,9 @@ export const api = {
   theme: () => call<ThemeView>('get_theme'),
   setTheme: (style: ThemeStyle) => call<void>('set_theme', { style }),
   setReduceMotion: (enabled: boolean) => call<void>('set_reduce_motion', { enabled }),
+  customThemes: () => call<CustomTheme[]>('list_custom_themes'),
+  addCustomTheme: (id: string, name: string, tokens: string) => call<void>('add_custom_theme', { id, name, tokens }),
+  deleteCustomTheme: (id: string) => call<void>('delete_custom_theme', { id }),
   securityStatus: () => call<SecurityStatus>('security_status'),
   audit: (limit: number) => call<AuditRow[]>('list_audit_events', { limit }),
   systemInfo: () => call<SystemInfo>('system_info'),
@@ -238,6 +243,17 @@ export const api = {
   checkUpdate: () => call<UpdateInfo>('check_update'),
   downloadUpdate: () => call<UpdateInfo>('download_update'),
   installUpdate: () => call<UpdateInfo>('install_update'),
+
+  // —— 局域网更新通道 ——
+  /** 发现状态与源列表；轮询调用，不携带任何秘密 */
+  lanStatus: () => call<LanStatus>('lan_status'),
+  /** 开关本机托管；dir 为空时后端拒绝开启（没有托管目录就没有可服务的包） */
+  lanSetServe: (enabled: boolean, dir?: string) =>
+    call<LanStatus>('lan_set_serve', { enabled, dir: dir ?? null }),
+  /** 从指定源（实例号或手填 IP:端口）或最优发现源拉清单并验签 */
+  lanCheck: (source?: string) => call<UpdateInfo>('lan_check', { source: source ?? null }),
+  /** 按上一次 lan_check 的清单从局域网取包；阶段与 HTTPS 下载一致 */
+  lanDownload: () => call<UpdateInfo>('lan_download'),
 
   // —— 浏览器扩展宿主清单 ——
   extensionHostStatus: () => call<ExtensionHostStatus>('extension_host_status'),

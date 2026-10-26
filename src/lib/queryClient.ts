@@ -34,6 +34,7 @@ export const queryKeys = {
   audit: (limit: number) => ['audit', limit] as const,
   backups: ['backups'] as const,
   update: ['update'] as const,
+  lan: ['lan'] as const,
   users: ['users'] as const,
   launcherPrefs: ['launcherPrefs'] as const,
   channelStatus: ['channelStatus'] as const,

@@ -13,6 +13,7 @@ import { Loading, ErrorState } from '../ui/StateBlocks';
 import { notify } from '../../state/notify';
 import { toNormalisedError } from '../../lib/errors';
 import { formatBytes } from '../../lib/format';
+import { LanSourcePanel } from './LanSourcePanel';
 
 interface UpdateProgress {
   percent?: number;
@@ -100,7 +101,7 @@ export function UpdateSection() {
 
   const install = useMutation({
     mutationFn: () => api.installUpdate(),
-    onSuccess: (u) => notify('success', u.message || '安装已提交'),
+    onSuccess: (u) => notify('success', u.message || '已打开安装包'),
     onError: (raw) => notify('danger', toNormalisedError(raw).message),
   });
 
@@ -154,7 +155,7 @@ export function UpdateSection() {
                     {download.isPending ? '下载中…' : '下载更新'}
                   </Button>
                   <Button disabled={install.isPending || !info.data.downloaded} onClick={() => install.mutate()}>
-                    {install.isPending ? '安装中…' : '安装并重启'}
+                    {install.isPending ? '打开中…' : '打开安装包'}
                   </Button>
                 </>
               ) : null}
@@ -228,6 +229,9 @@ export function UpdateSection() {
           ) : null}
         </div>
       ) : null}
+
+      {/* 局域网通道：追加在 HTTPS 通道卡片之下，不改动上面任何一块布局 */}
+      <LanSourcePanel progress={progress} />
     </div>
   );
 }

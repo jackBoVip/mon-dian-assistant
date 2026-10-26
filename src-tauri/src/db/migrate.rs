@@ -23,9 +23,11 @@ const MIGRATIONS: &[Migration] = &[
     Migration { version: 9, name: "0009_menu_nodes", sql: include_str!("../../../migrations/0009_menu_nodes.sql") },
     Migration { version: 10, name: "0010_menu_node_permissions", sql: include_str!("../../../migrations/0010_menu_node_permissions.sql") },
     Migration { version: 11, name: "0011_remove_data_page", sql: include_str!("../../../migrations/0011_remove_data_page.sql") },
+    Migration { version: 12, name: "0012_custom_themes", sql: include_str!("../../../migrations/0012_custom_themes.sql") },
+    Migration { version: 13, name: "0013_lan_update", sql: include_str!("../../../migrations/0013_lan_update.sql") },
 ];
 
-pub const LATEST_VERSION: i64 = 11;
+pub const LATEST_VERSION: i64 = 13;
 
 pub fn run(db: &Db) -> Result<()> {
     let conn = db.lock_conn();

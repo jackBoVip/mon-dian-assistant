@@ -33,6 +33,8 @@ pub mod perm {
     pub const SYS_BACKUP: &str = "system.backup.manage";
     pub const SYS_UPDATE_INSTALL: &str = "system.update.install";
     pub const SYS_UPDATE_CONFIG: &str = "system.update.config";
+    /// 开放入站端口是运维暴露面，单独授权：有「改更新源」不等于该让这台机器当分发点。
+    pub const SYS_UPDATE_SERVE: &str = "system.update.serve";
 }
 
 /// 当前使用者的全部权限键（菜单 + 操作）。

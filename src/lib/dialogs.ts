@@ -35,6 +35,13 @@ export async function openFile(options: FileDialogOptions = {}): Promise<string 
   return typeof picked === 'string' ? picked : null;
 }
 
+/** 选择单个目录；用户取消返回 null。只负责选路径，不读写任何文件。 */
+export async function openDirectory(options: FileDialogOptions = {}): Promise<string | null> {
+  if (!isTauri()) throw notTauriError();
+  const picked = await open({ ...options, multiple: false, directory: true });
+  return typeof picked === 'string' ? picked : null;
+}
+
 /** 选择保存路径；用户取消返回 null。只负责选路径，不写文件。 */
 export async function saveFileDialog(options: FileDialogOptions = {}): Promise<string | null> {
   if (!isTauri()) throw notTauriError();

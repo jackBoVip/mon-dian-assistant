@@ -5,7 +5,7 @@ import { ThemeMenu } from './ThemeMenu';
 import { useTheme } from '../state/theme';
 import { useNotify } from '../state/notify';
 import { ApiError } from '../lib/api';
-import { THEME_LABELS, type ThemeStyle } from '../lib/types';
+import { BUILTIN_THEME_LABELS, type BuiltinThemeStyle } from '../lib/types';
 
 /**
  * 顶栏「切换界面风格」下拉的测试基准。
@@ -25,7 +25,7 @@ vi.mock('../lib/api', async (importOriginal) => {
   return { ...mod, api: { ...mod.api, ...mocks } };
 });
 
-const STYLES = Object.keys(THEME_LABELS) as ThemeStyle[];
+const STYLES = Object.keys(BUILTIN_THEME_LABELS) as BuiltinThemeStyle[];
 
 function open() {
   render(<ThemeMenu />);
@@ -57,7 +57,7 @@ describe('主题下拉就是原型那四套', () => {
 
   it('每套各有名片且名字唯一，只有当前那套 aria-checked=true', () => {
     open();
-    STYLES.forEach((s) => expect(checked(THEME_LABELS[s])).toBe(String(s === 'glass')));
+    STYLES.forEach((s) => expect(checked(BUILTIN_THEME_LABELS[s])).toBe(String(s === 'glass')));
     // 名片是纯视觉件：色块不能进可及名，否则按钮名会变成"色块 极光液态"
     STYLES.forEach((s) => {
       const swatch = document.querySelector(`.theme-preview[data-preview="${s}"]`);
@@ -67,13 +67,13 @@ describe('主题下拉就是原型那四套', () => {
 
   it('点一套即时改 DOM 主题并落库，不收起菜单（要连着比几套）', async () => {
     const menu = open();
-    pointerTap(within(menu).getByRole('menuitemradio', { name: THEME_LABELS.obsidian }));
+    pointerTap(within(menu).getByRole('menuitemradio', { name: BUILTIN_THEME_LABELS.obsidian }));
     expect(useTheme.getState().style).toBe('obsidian');
     expect(document.documentElement.getAttribute('data-theme')).toBe('obsidian');
     await waitFor(() => expect(mocks.setTheme).toHaveBeenCalledWith('obsidian'));
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    expect(checked(THEME_LABELS.obsidian)).toBe('true');
-    expect(checked(THEME_LABELS.glass)).toBe('false');
+    expect(checked(BUILTIN_THEME_LABELS.obsidian)).toBe('true');
+    expect(checked(BUILTIN_THEME_LABELS.glass)).toBe('false');
   });
 
   it('明暗第三轴、玻璃强度档、高对比度这一轮全撤，菜单里不该还留着入口', () => {
@@ -93,9 +93,9 @@ describe('主题下拉就是原型那四套', () => {
 describe('选中即存，一声不吭', () => {
   it('连点两套各发一次 set_theme，不发 set_reduce_motion（那条要会话，会撞 SESSION_LOCKED）', async () => {
     const menu = open();
-    pointerTap(within(menu).getByRole('menuitemradio', { name: THEME_LABELS.cyber }));
+    pointerTap(within(menu).getByRole('menuitemradio', { name: BUILTIN_THEME_LABELS.cyber }));
     await waitFor(() => expect(mocks.setTheme).toHaveBeenCalledWith('cyber'));
-    pointerTap(within(menu).getByRole('menuitemradio', { name: THEME_LABELS.minimal }));
+    pointerTap(within(menu).getByRole('menuitemradio', { name: BUILTIN_THEME_LABELS.minimal }));
     await waitFor(() => expect(mocks.setTheme).toHaveBeenCalledWith('minimal'));
     expect(mocks.setTheme).toHaveBeenCalledTimes(2);
     expect(mocks.setReduceMotion).not.toHaveBeenCalled();
@@ -103,12 +103,12 @@ describe('选中即存，一声不吭', () => {
 
   it('成功不弹提示；后端拒了也不弹，本窗口的外观照样已经变了', async () => {
     const menu = open();
-    pointerTap(within(menu).getByRole('menuitemradio', { name: THEME_LABELS.cyber }));
+    pointerTap(within(menu).getByRole('menuitemradio', { name: BUILTIN_THEME_LABELS.cyber }));
     await waitFor(() => expect(mocks.setTheme).toHaveBeenCalled());
     expect(useNotify.getState().items).toHaveLength(0);
 
     mocks.setTheme.mockRejectedValue(new ApiError({ code: 'SESSION_LOCKED', message: '保险库已锁定' }));
-    pointerTap(within(menu).getByRole('menuitemradio', { name: THEME_LABELS.obsidian }));
+    pointerTap(within(menu).getByRole('menuitemradio', { name: BUILTIN_THEME_LABELS.obsidian }));
     await waitFor(() => expect(mocks.setTheme).toHaveBeenCalledWith('obsidian'));
     expect(document.documentElement.getAttribute('data-theme')).toBe('obsidian');
     expect(useNotify.getState().items).toHaveLength(0);
