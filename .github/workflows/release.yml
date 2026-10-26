@@ -134,9 +134,20 @@ jobs:
           # `'-C link-args=/MANIFEST:EMBED /MANIFESTINPUT:...'`，中间那个空格让
           # rustc 把 /MANIFESTINPUT 当成第二个输入文件名，直接报
           # `multiple input filenames provided`（第八轮实撞）。所以拆成两条。
+          #
+          # 并且必须按目标类型分开跑：tauri-build 通过 `cargo:rustc-link-arg-bins`
+          # 给**每个 bin 目标**的 resource.lib 里已经嵌了一份 MANIFEST 资源，再叠
+          # 一份就是 `CVTRES: fatal error CVT1100: duplicate resource
+          # type:MANIFEST`（第九轮实撞，接着 LNK1123）。而 lib / integration test /
+          # bench 这些目标**拿不到**那份清单——这才是第七轮
+          # STATUS_ENTRYPOINT_NOT_FOUND 的来源：裸测试 exe 静态导入的
+          # TaskDialogIndirect 之类符号只存在于 comctl32 v6，而 v6 只能靠 manifest
+          # 的激活上下文加载。换个说法：这条平台上后端单元测试从来没跑起来过。
           $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS =
             '-C link-args=/MANIFEST:EMBED -C link-args=/MANIFESTINPUT:' + $manifest
-          cargo test --all-targets
+          cargo test --lib --tests --benches
+          Remove-Item Env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS
+          cargo test --bins
 
       - name: build macOS（app + dmg 必须同一次调用，单跑 dmg 会删掉 .app）
         if: runner.os == 'macOS'
