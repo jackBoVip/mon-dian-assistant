@@ -245,8 +245,8 @@ export const useSession = create<SessionState>((set, get) => ({
     } catch {
       /* 锁定失败不改变前端呈现，下面统一按未解锁处理 */
     }
-    const status = get().status ? { ...get().status!, unlocked: false } : null;
-    set({ status, profile: null, phase: 'login', ...ERROR_FIELDS });
+    const cur = get().status;
+    set({ status: cur ? { ...cur, unlocked: false } : null, profile: null, phase: 'login', ...ERROR_FIELDS });
     await get().refreshProfile();
   },
 

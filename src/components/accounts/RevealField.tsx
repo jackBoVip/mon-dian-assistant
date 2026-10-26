@@ -77,6 +77,9 @@ export function RevealField({ itemId, has }: RevealFieldProps) {
         if (s <= 0) clear();
       }, 500);
     } catch (raw) {
+      // clear() 会递增 reqSeq，finally 的世代守卫此后必然不成立；
+      // busy 必须在这里就地复位，否则失败一次按钮永久禁用。
+      setBusy(false);
       if (seq !== reqSeq.current) return;
       const err = toNormalisedError(raw);
       if (raw instanceof ApiError && (err.code === 'REAUTH_REQUIRED' || err.code === 'SESSION_LOCKED' || err.code === 'SESSION_EXPIRED')) {

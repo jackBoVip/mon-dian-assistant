@@ -1,0 +1,102 @@
+name: release-packages
+
+# 三端安装包产出矩阵（代码质量审计 2026-10-26 §三端支持）。
+# 每个 job 在对应 OS 的原生 runner 上：先 prepare-host-binary.sh 产出
+# externalBin 需要的 mda_fill_host-<host-triple> 侧车，再 tauri build。
+# 不做交叉编译 —— 侧车与主程序都在本机 triple 上构建。
+# 触发：打 v* tag 或手动 dispatch；产物在 Run 的 Artifacts 里下载。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Linux 打包依赖（Tauri v2 官方前置）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf rpm
+
+      - name: npm ci + 前端门禁（tsc / vite build / vitest）
+        run: |
+          npm ci
+          npm run verify
+
+      - name: cargo test（后端全量测试）
+        working-directory: src-tauri
+        run: cargo test --all-targets
+
+      - name: 构建本 triple 的 Native Messaging 侧车
+        run: bash scripts/prepare-host-binary.sh
+
+      - name: build macOS（app + dmg 必须同一次调用，单跑 dmg 会删掉 .app）
+        if: runner.os == 'macOS'
+        run: npx tauri build --bundles app,dmg
+
+      - name: build Windows（nsis + msi）
+        if: runner.os == 'Windows'
+        run: npx tauri build --bundles nsis,msi
+
+      - name: build Linux（deb + appimage；rpm 视 runner 的 rpmbuild，缺则降级不阻塞）
+        if: runner.os == 'Linux'
+        run: |
+          if command -v rpmbuild >/dev/null 2>&1; then
+            npx tauri build --bundles deb,rpm,appimage
+          else
+            echo "::warning::runner 无 rpmbuild，本轮只产 deb + AppImage"
+            npx tauri build --bundles deb,appimage
+          fi
+
+      - name: 生成 SHA-256 摘要清单
+        shell: bash
+        run: |
+          cd src-tauri/target/release/bundle
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            find . \( -name '*.exe' -o -name '*.msi' \) -type f -print0 |
+              xargs -0 -r sha256sum > ../artifacts-sha256.txt
+          else
+            find . \( -name '*.dmg' -o -name '*.app' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) \
+              -maxdepth 3 -type f -print0 | xargs -0 -r sha256sum > ../artifacts-sha256.txt
+          fi
+          cat ../artifacts-sha256.txt
+
+      - name: 上传安装包产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ runner.os }}-${{ github.ref_name || github.sha }}
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/artifacts-sha256.txt
+          if-no-files-found: error

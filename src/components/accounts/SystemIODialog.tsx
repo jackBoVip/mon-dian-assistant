@@ -339,7 +339,7 @@ export function SystemIODialog({ open, mode, format, targetId, targetName, onClo
                   第 {e.rowNo} 行：{e.message}
                 </li>
               ))}
-              {preview.errors.length > 5 ? <li>另有 {preview.errors.length - 5} 条错误，请到「导入导出」页看完整清单。</li> : null}
+              {preview.errors.length > 5 ? <li>另有 {preview.errors.length - 5} 条错误未逐条列出，修正文件后重新选择可刷新此清单。</li> : null}
             </ul>
           ) : null}
         </div>

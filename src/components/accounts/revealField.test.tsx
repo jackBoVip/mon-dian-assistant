@@ -60,6 +60,26 @@ describe('RevealField 的迟到响应', () => {
     expect(await screen.findByText('p@ss')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '立即隐藏' })).toBeInTheDocument();
   });
+
+  it('reveal 失败后按钮必须可重试，不能永久禁用', async () => {
+    // catch 里的 clear() 会推进 reqSeq；若 busy 复位只挂在 finally 的世代守卫上，
+    // 失败一次后守卫恒不成立，按钮就再也点不动了（AUDIT-1026 新发现，不在 10-19 的 F 系列里）。
+    mocks.revealSecret.mockRejectedValueOnce(
+      Object.assign(new Error('需要二次认证'), { code: 'REAUTH_REQUIRED' }),
+    );
+    renderAt('item-1');
+
+    fireEvent.click(screen.getByRole('button', { name: /查看明文/ }));
+    await waitFor(() => expect(mocks.revealSecret).toHaveBeenCalledTimes(1));
+    // busy 落盘要等微任务，findByRole 自带轮询；失败后若 busy 卡住，这里会超时
+    expect(await screen.findByRole('button', { name: /查看明文/ })).toBeEnabled();
+
+    mocks.revealSecret.mockResolvedValue({ value: 'p@ss2', visibleSeconds: 10 });
+    const retry = screen.getByRole('button', { name: /查看明文/ });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(await screen.findByText('p@ss2')).toBeInTheDocument();
+  });
 });
 
 async function waitFor(fn: () => void) {
