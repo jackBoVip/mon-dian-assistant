@@ -157,7 +157,13 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           npx tauri build --bundles nsis
-          npx tauri build --bundles msi
+          # 第十轮实撞：MSI 在 WiX 链接期报 LGHT0311——产品名是中文，而生成的
+          # main.wxs 用默认 codepage 1252（Latin-1）装不下。已把 wix.language
+          # 设成 zh-CN 让 WiX 走 936；这条仍留作非阻塞，保证即使 msi 再出问题，
+          # 本轮也一定能交付 NSIS 的 -setup.exe，而不是整个 job 红掉什么都没有。
+          if ! npx tauri build --bundles msi; then
+            echo "::warning::msi 打包失败（LGHT0311 中文字符 vs WiX codepage）；本轮只交付 NSIS .exe"
+          fi
 
       - name: build Linux（deb / rpm / appimage 各自一次调用）
         if: runner.os == 'Linux'
