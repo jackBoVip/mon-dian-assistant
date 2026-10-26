@@ -162,14 +162,23 @@ jobs:
           # pwsh 里原生命令失败默认也不中断，所以两条都要显式看 $LASTEXITCODE。
           npx tauri build --bundles nsis
           if ($LASTEXITCODE -ne 0) { throw "nsis 打包失败（exit $LASTEXITCODE）" }
+          # pwsh 会把最后一条原生命令的退出码当作脚本退出码：第十二轮里 nsis 已经
+          # `Finished 1 bundle`、msi 的 ::warning:: 也照常发出了，步骤却仍 exit 1。
+          # 所以先断言 nsis 的 .exe 真的在盘上（不掩盖真失败），再显式收尾。
+          $nsis = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter *.exe -ErrorAction SilentlyContinue
+          if (-not $nsis) { throw 'nsis 报成功但 bundle/nsis 下没有 .exe' }
+          Write-Host "nsis artifact: $($nsis[0].Name) ($([math]::Round($nsis[0].Length/1MB,2)) MB)"
           # 第十轮实撞：MSI 在 WiX 链接期报 LGHT0311——产品名是中文，而生成的
           # main.wxs 用默认 codepage 1252（Latin-1）装不下。已把 wix.language
-          # 设成 zh-CN 让 WiX 走 936；这条仍留作非阻塞，保证即使 msi 再出问题，
-          # 本轮也一定能交付 NSIS 的 -setup.exe，而不是整个 job 红掉什么都没有。
+          # 设成 zh-CN 让 WiX 走 936，那条从此消失；第十一/十二轮 MSI 改为
+          # ICE30：侧车 mda_fill_host.exe 被 'mda_fill_host.exe' 与 'mda_fill_host'
+          # 两个组件重复登记（与 Linux rpm 那句 duplicate file entry 同源）。
+          # msi 保持非阻塞：保证即使 msi 再出问题，本轮也能交付 NSIS 的 -setup.exe。
           npx tauri build --bundles msi
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "::warning::msi 打包失败（LGHT0311 中文字符 vs WiX codepage）；本轮只交付 NSIS .exe"
+            Write-Host "::warning::msi 打包失败（WiX ICE30：externalBin 侧车在 MSI 里被两个组件重复登记）；本轮只交付 NSIS .exe"
           }
+          exit 0
 
       - name: build Linux（deb / rpm / appimage 各自一次调用）
         if: runner.os == 'Linux'
