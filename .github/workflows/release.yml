@@ -45,6 +45,23 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Windows 构建前置（perl 与 nasm）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # rusqlite 的 bundled-sqlcipher-vendored-openssl 要在本机编 OpenSSL，
+          # 而 GitHub Windows runner 的 PATH 上 git-bash 的 MSYS perl 排在前面，
+          # 那份 perl 缺 Params::Check / IPC::Cmd 等核心模块，Configure 直接崩
+          # （三端首跑实撞：`BEGIN failed--compilation aborted at .../core_perl/...`）。
+          # 把 Strawberry perl 提到 PATH 最前，让 vendored 构建用它。
+          "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm -y --no-progress
+            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          & "C:\Strawberry\perl\bin\perl.exe" -MParams::Check -MIPC::Cmd -e "print qq{strawberry perl ok`n}"
+          perl -e "print qq{PATH perl: `n}"
+
       - name: Linux 打包依赖（Tauri v2 官方前置）
         if: runner.os == 'Linux'
         run: |
