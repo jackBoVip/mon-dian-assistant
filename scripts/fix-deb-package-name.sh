@@ -6,8 +6,15 @@
 # 的显示名（/usr/share/applications/蒙电信产助手.desktop、Name=蒙电信产助手）
 # 一律不动，产品可见名称保持不变。
 #
+# 为什么不用 dpkg-deb -R：它在**解析** control 时就用同一套包名规则校验，而旧包里
+# 那句非法包名正是被解析的对象。本轮 CI 实测两次都死在这里：
+#   dpkg:       error: package name '蒙电信产助手' is invalid: must start with an alphanumeric character
+#   dpkg-deb -R: error: parsing file '.../control' near line 1:
+#                invalid package name in 'Package' field: must start with an alphanumeric character
+# 所以输入侧只用 ar/tar 拆包，重打包仍交给 dpkg-deb -b——它校验的是已经改好的 control。
+#
 # 用法：scripts/fix-deb-package-name.sh <deb 文件或 bundle/deb 目录> [包名]
-# 依赖 dpkg-deb / dpkg，仅适用于 Linux 宿主（deb 本来也只能在 Linux 上打）。
+# 依赖 ar/tar/dpkg-deb/dpkg，仅适用于 Linux 宿主（deb 本来也只能在 Linux 上打）。
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
@@ -32,18 +39,43 @@ if [ -z "${deb:-}" ] || [ ! -f "$deb" ]; then
   echo "ERROR: 找不到 deb 文件：$target" >&2
   exit 1
 fi
+deb="$(readlink -f "$deb")"
 
-version="$(dpkg-deb -f "$deb" Version)"
-arch="$(dpkg-deb -f "$deb" Architecture)"
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/stage/DEBIAN" "$tmp/raw"
 
-dpkg-deb -R "$deb" "$work/pkg"
-sed -i "s/^Package: .*/Package: ${pkgname}/" "$work/pkg/DEBIAN/control"
+# 用「进临时目录再 ar x」这种各版本 ar 都支持的写法，不依赖 --output 修饰符。
+(cd "$tmp/raw" && ar x "$deb")
+
+ctl="$(find "$tmp/raw" -maxdepth 1 -name 'control.tar.*' -print -quit)"
+dat="$(find "$tmp/raw" -maxdepth 1 -name 'data.tar.*' -print -quit)"
+if [ -z "$ctl" ] || [ -z "$dat" ]; then
+  echo "ERROR: 拆包没拿到 control/data 成员：$(ls "$tmp/raw")" >&2
+  exit 1
+fi
+
+# control 的成员是 control / md5sums（无 ./ 前缀），data 的成员是 usr/...
+tar -xf "$ctl" -C "$tmp/stage/DEBIAN"
+tar -xf "$dat" -C "$tmp/stage"
+
+control="$tmp/stage/DEBIAN/control"
+[ -f "$control" ] || { echo "ERROR: 解出来的树里没有 DEBIAN/control" >&2; exit 1; }
+
+# Version / Architecture 也只能从这里读：dpkg-deb -f 同样会去解析那份非法 control。
+version="$(sed -n 's/^Version: //p' "$control" | head -n1)"
+arch="$(sed -n 's/^Architecture: //p' "$control" | head -n1)"
+if [ -z "$version" ] || [ -z "$arch" ]; then
+  echo "ERROR: control 里缺 Version/Architecture（version='$version' arch='$arch'）" >&2
+  exit 1
+fi
+
+sed -i "s/^Package: .*/Package: ${pkgname}/" "$control"
+
 out="$(dirname "$deb")/${pkgname}_${version}_${arch}.deb"
-# --root-owner-group：解包再打包会把文件属主变成当前用户，这里固定回 root:root。
-dpkg-deb --root-owner-group -b "$work/pkg" "$out" >/dev/null
-if [ "$(readlink -f "$deb")" != "$(readlink -f "$out")" ]; then
+# --root-owner-group：解包再打包会把属主变成当前用户，这里固定回 root:root。
+dpkg-deb --root-owner-group -b "$tmp/stage" "$out"
+if [ "$deb" != "$out" ]; then
   rm -f "$deb"
 fi
 
