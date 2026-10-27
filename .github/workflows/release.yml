@@ -281,7 +281,12 @@ jobs:
               b="$(basename "$f")"
               case "$b" in
                 *.dmg)       a="${b%.dmg}";       cp "$f" "out/macOS-${a##*_}.dmg" ;;
-                *_setup.exe) a="${b%_setup.exe}"; cp "$f" "out/Windows-${a##*_}-setup.exe" ;;
+                # NSIS 的产物名结尾是 `_x64-setup.exe`，不是 `_setup.exe`。原先那枚
+                # `*_setup.exe` 分支从没接住过（build.17 是 publish job 第一次真跑，当场露馅）：
+                # 中文原名落进 out/，GitHub 上传时静默删掉非 ASCII 字符，
+                # `蒙电信产助手_0.1.0_x64-setup.exe` 就成了 `_0.1.0_x64-setup.exe`，
+                # 而 SHA256SUMS.txt 记的还是上传前那个名字 —— 使用者 `sha256sum -c` 必失败。
+                *.exe)       cp "$f" "out/Windows-x64-setup.exe" ;;
                 *.deb)       a="${b%.deb}";       cp "$f" "out/Linux-${a##*_}.deb" ;;
                 *.AppImage)  a="${b%.AppImage}";  cp "$f" "out/Linux-${a##*_}.AppImage" ;;
                 *)           cp "$f" "out/$b" ;;
@@ -292,6 +297,12 @@ jobs:
           ( cd out && sha256sum -- * > ../SHA256SUMS.txt )
           mv SHA256SUMS.txt out/
           test -n "$(find out -name 'macOS-*.dmg' -print -quit)" || { echo "::error::没有 macOS 包"; exit 1; }
+          # 资源名必须纯 ASCII：上传那一步 GitHub 会静默删掉非 ASCII 字符（见上面 *.exe 分支那条），
+          # 到那时清单里的名字就对不上了。宁可在这里就红，不要把一个 `-c` 必失败的 Release 发出去。
+          if LC_ALL=C grep -q '[^ -~]' out/SHA256SUMS.txt; then
+            echo "::error::SHA256SUMS.txt 里有非 ASCII 资源名 —— 改名分支没接住某个产物"
+            exit 1
+          fi
           ls -l out
 
       - name: 创建或更新 GitHub Release
@@ -324,6 +335,16 @@ jobs:
             gh release create "$tag" out/* $prerelease --target "$GITHUB_SHA" \
               --title "蒙电信产助手 ${version} 三端安装包" --notes-file release-notes.md
           fi
+          # 终判据是**发布出来的那一面**，不是我以为传上去的那一面：
+          # 名字逐条比对（清单自身那一行不在摘要里，单独补上），对不上就让 job 红。
+          { awk '{print $2}' out/SHA256SUMS.txt; echo SHA256SUMS.txt; } | sort > expected-names.txt
+          gh release view "$tag" --json assets --jq '.assets[].name' | sort > published-names.txt
+          if ! diff -u expected-names.txt published-names.txt > name-diff.txt 2>&1; then
+            cat name-diff.txt
+            echo "::error::Release 上的资源名与 SHA256SUMS.txt 不同源，下载后 sha256sum -c 会失败"
+            exit 1
+          fi
+          echo "资源名与摘要清单逐条同源（$(wc -l < published-names.txt | tr -d ' ') 枚）"
           echo "Release 已就绪：$tag（https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}）"
 
 
