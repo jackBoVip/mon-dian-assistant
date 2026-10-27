@@ -4,7 +4,8 @@ name: release-packages
 # 每个 job 在对应 OS 的原生 runner 上：先 prepare-host-binary.sh 产出
 # externalBin 需要的 mda_fill_host-<host-triple> 侧车，再 tauri build。
 # 不做交叉编译 —— 侧车与主程序都在本机 triple 上构建。
-# 触发：打 v* tag 或手动 dispatch；产物在 Run 的 Artifacts 里下载。
+# 触发：打 v* tag 或手动 dispatch。产物两处可见：Run 的 Artifacts（90 天过期），
+# 以及 publish job 自动开/更新的 GitHub Release（仓库侧栏 Releases 里那个）。
 on:
   workflow_dispatch:
   push:
@@ -252,5 +253,78 @@ jobs:
             src-tauri/target/release/bundle/**/*.AppImage
             src-tauri/target/release/artifacts-sha256.txt
           if-no-files-found: error
+
+  publish:
+    name: 发布 GitHub Release（安装包挂到仓库的 Releases）
+    # Actions 的 artifact 只在 Run 页面可见、默认 90 天后过期，仓库侧栏的
+    # Releases/Packages 不会显示它。这一步把三端 artifact 拉平、改成 ASCII
+    # 资源名，再开一个 Release 把安装包附上去。
+    needs: package
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载三端 artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          path: dl
+
+      - name: 整理成 Release 资源名并复算摘要
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for d in dl/packages-*; do
+            while IFS= read -r -d '' f; do
+              b="$(basename "$f")"
+              case "$b" in
+                *.dmg)       a="${b%.dmg}";       cp "$f" "out/macOS-${a##*_}.dmg" ;;
+                *_setup.exe) a="${b%_setup.exe}"; cp "$f" "out/Windows-${a##*_}-setup.exe" ;;
+                *.deb)       a="${b%.deb}";       cp "$f" "out/Linux-${a##*_}.deb" ;;
+                *.AppImage)  a="${b%.AppImage}";  cp "$f" "out/Linux-${a##*_}.AppImage" ;;
+                *)           cp "$f" "out/$b" ;;
+              esac
+            done < <(find "$d" -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) -print0)
+          done
+          # 摘要按最终资源名重算：包内自带的清单记的是各 runner 上的 bundle 相对路径。
+          ( cd out && sha256sum -- * > ../SHA256SUMS.txt )
+          mv SHA256SUMS.txt out/
+          test -n "$(find out -name 'macOS-*.dmg' -print -quit)" || { echo "::error::没有 macOS 包"; exit 1; }
+          ls -l out
+
+      - name: 创建或更新 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -n1)"
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"; prerelease=""
+          else
+            # 非 tag 触发（dispatch/分支）不占正式 tag，避免与 v* 抢同一个 Release。
+            tag="v${version}-build.${GITHUB_RUN_NUMBER}"; prerelease="--prerelease"
+          fi
+          cat > release-notes.md <<EOF
+          三端安装包由 GitHub Actions 的原生 runner 产出（commit ${GITHUB_SHA}）。
+
+          - macOS：\`macOS-<arch>.dmg\`（未签名，ad-hoc；其它 Mac 上 Gatekeeper 会拦）
+          - Windows：\`Windows-x64-setup.exe\`（NSIS；msi 未产出，WiX ICE30）
+          - Linux：\`Linux-amd64.deb\` + \`Linux-amd64.AppImage\`（rpm 未产出，Tauri 侧 externalBin 重复登记）
+          - \`SHA256SUMS.txt\` 按上面这些资源名计算，下载后先 \`sha256sum -c\` 再装
+
+          交付前必读：三端**均未签名、均未在目标机做过安装与首启验证**；WebView2 走
+          \`downloadBootstrapper\`，内网无外网时安装阶段会失败。详见仓库内
+          \`docs/部署手册.md\` §1.2/§1.3 与《代码质量审计与三端支持》。
+          EOF
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" out/* --clobber
+          else
+            gh release create "$tag" out/* $prerelease --target "$GITHUB_SHA" \
+              --title "蒙电信产助手 ${version} 三端安装包" --notes-file release-notes.md
+          fi
+          echo "Release 已就绪：$tag（https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}）"
+
 
 # 触发 GitHub 重新发现本工作流（AUDIT-1026）
