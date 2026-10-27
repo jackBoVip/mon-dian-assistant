@@ -18,7 +18,7 @@ import { formatTimestamp } from '../lib/format';
 import { notify } from '../state/notify';
 import { useLauncherNav } from '../state/launcherNav';
 import { toNormalisedError } from '../lib/errors';
-import { connectTerminal, copyPassword, copyUsername, openAndFill } from '../lib/actions';
+import { connectTarget, copyPassword, copyUsername, openAndFill } from '../lib/actions';
 
 /**
  * 左侧系统列表一次取满后端上限：原型没有分页控件，超出部分靠顶栏那颗全局检索收窄。
@@ -28,6 +28,23 @@ import { connectTerminal, copyPassword, copyUsername, openAndFill } from '../lib
 const LIST_LIMIT = 200;
 /** 右侧账号表每页行数（原型页脚是"共 N 条数据 + 页码"，没有每页条数下拉）。 */
 const PAGE_SIZE = 10;
+
+/**
+ * 那颗跳转按钮的说法，必须等于命令真正做的事（后端按类型分三路，见 commands/launcher.rs::connect_target）：
+ * web 开浏览器并等扩展填充；terminal 交终端档；database 交引擎档；其余类型只把非秘密连接信息放进剪贴板。
+ */
+function openActionLabel(itemType: string): { aria: string; title: string } {
+  switch (itemType) {
+    case 'web':
+      return { aria: '打开并填充', title: '打开并填充' };
+    case 'terminal':
+      return { aria: '连接终端', title: '连接终端' };
+    case 'database':
+      return { aria: '用数据库工具打开', title: '按引擎交给「外部工具」里配的客户端；没配置则交系统默认' };
+    default:
+      return { aria: '复制连接信息', title: '该类型由本机客户端完成：复制不含密码的连接信息' };
+  }
+}
 
 /**
  * 账号中心（原型的主从两栏）：左 240px 接入系统列表，右栏当前系统下的托管账号表。
@@ -171,10 +188,15 @@ export function AccountsPage() {
     return (setDefault.isPending && setDefault.variables === itemId) || (favorite.isPending && favorite.variables?.id === itemId);
   }
 
+  /**
+   * 按类型选路。**只有 web 走「打开并填充」**——后端的填充票对非 web 直接判无效输入
+   * （`quick_launcher/actions.rs::issue_fill_ticket`），所以数据库类以前点这颗按钮是死的。
+   * 其余类型一律交给 `connect_target`：它按「外部工具」那页的配置决定交给哪个应用，
+   * 没配置（或那个应用在本机已经找不到）就回退系统默认。
+   */
   function openOne(item: ItemView) {
-    // 终端类凭据的"打开"是连终端，其余才是打开并填充：文案得跟命令真正做的事一致
-    if (item.itemType === 'terminal') void connectTerminal(item.id);
-    else if (selected) void openAndFill(selected, item.id);
+    if (item.itemType === 'web' && selected) void openAndFill(selected, item.id);
+    else void connectTarget(item.id);
   }
 
   /** 导出下拉那两行只决定格式与开弹窗；系统取左栏当前选中的那一个（没选中时由弹窗如实报"请先选择系统"）。 */
@@ -306,10 +328,14 @@ export function AccountsPage() {
               type="button"
               className="filter-btn"
               aria-label="打开默认账号"
-              title={defaultItem ? `打开默认账号：${defaultItem.accountAlias}` : '该系统还没有默认账号，先在账号行上点「设为默认」'}
+              title={
+                defaultItem
+                  ? `${openActionLabel(defaultItem.itemType).aria}默认账号：${defaultItem.accountAlias}`
+                  : '该系统还没有默认账号，先在账号行上点「设为默认」'
+              }
               disabled={!defaultItem || !selected}
               onClick={() => {
-                if (defaultItem && selected) void openAndFill(selected, defaultItem.id);
+                if (defaultItem) openOne(defaultItem);
               }}
             >
               <Icon name="externalLink" size={18} />
@@ -593,8 +619,8 @@ function CredentialRow({
           <button
             type="button"
             className="action-icon-btn"
-            aria-label={item.itemType === 'terminal' ? `连接终端 ${item.accountAlias}` : `打开并填充 ${item.accountAlias}`}
-            title={item.itemType === 'terminal' ? '连接终端' : disabled ? '账号已停用，先启用后再打开' : '打开'}
+            aria-label={`${openActionLabel(item.itemType).aria} ${item.accountAlias}`}
+            title={disabled ? '账号已停用，先启用后再打开' : openActionLabel(item.itemType).title}
             disabled={disabled}
             onClick={onOpen}
           >

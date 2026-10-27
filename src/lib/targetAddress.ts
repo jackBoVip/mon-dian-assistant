@@ -3,7 +3,7 @@ import type { CreateTargetInput, TargetMeta } from './types'
 /**
  * 新增系统弹窗只有一个地址输入框（原型 994-997 那一格，也是 Chrome / Edge 的形状），
  * 但后端把地址拆成 url / host / port / protocol / 库名 分列存储，而且
- * `quick_launcher::actions::connect_terminal` 只认 host（src-tauri/src/quick_launcher/actions.rs）：
+ * `commands/launcher.rs::connect_target` 只认 host（终端那一档要拿 host 拼 ssh:// 地址）：
  * 只填一栏就得在这里派生出其余几栏，否则终端类系统建出来后「连接终端」点下去是死的。
  */
 export interface DerivedAddress {

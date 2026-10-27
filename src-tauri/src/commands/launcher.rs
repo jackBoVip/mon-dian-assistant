@@ -9,6 +9,7 @@ use super::{action_policy, audit, extension_gate, ActionReply, Result, SearchRep
 use crate::commands::accounts::doc_of;
 use crate::db::repo;
 use crate::error::AppError;
+use crate::external_tools::{self, Kind};
 use crate::quick_launcher::{self, actions as ql, parser, query as qlq, shortcut, QuickAction};
 use crate::rbac::perm;
 use crate::rbac;
@@ -160,6 +161,11 @@ pub fn open_target(target_id: String) -> Result<ActionReply> {
     if repo::is_insecure_protocol(&target_type, &protocol) && !settings::get_bool(&core.db, "allow_insecure_protocols", false) {
         return Err(AppError::InsecureProtocolDisabled);
     }
+    // 数据库类台账存的是 `jdbc:mysql://…` 这类地址。它不属于"浏览器能打开的 scheme"，
+    // 但也不该被一律判无效输入——按引擎交给配置好的数据库客户端，没配置才交系统默认。
+    if target_type == "database" {
+        return open_database_target(&core, &user, &target_id, &url, &protocol, "accounts.open_target", "target");
+    }
     let scheme = url.split(':').next().unwrap_or("").to_lowercase();
     if !matches!(scheme.as_str(), "https" | "http" | "ssh" | "sftp" | "rdp" | "vnc") {
         return Err(AppError::InvalidInput);
@@ -167,13 +173,50 @@ pub fn open_target(target_id: String) -> Result<ActionReply> {
     if scheme == "http" && !settings::get_bool(&core.db, "allow_insecure_protocols", false) {
         return Err(AppError::InsecureProtocolDisabled);
     }
-    open_in_browser(&url)?;
+    let outcome = open_in_browser(&core, &url)?;
     audit(&core, Some(&user), "accounts.open_target", Some("target"), Some(&target_id), true, None, "launcher");
-    Ok(ActionReply { opened: Some(super::super::quick_launcher::query::address_summary(&url)), ..ActionReply::ok("open_target", "已在系统浏览器中打开") })
+    Ok(ActionReply {
+        opened: Some(quick_launcher::query::address_summary(&url)),
+        ..ActionReply::ok("open_target", &format!("{}打开", outcome.tool_note("浏览器")))
+    })
 }
 
-fn open_in_browser(url: &str) -> std::result::Result<(), AppError> {
-    open::that(url).map_err(|e| AppError::internal("启动器命令", &e))
+/// 数据库类地址的跳转：引擎档 → 系统默认 → 都不行才降级成复制。
+///
+/// 复制这一步不是锦上添花：多数数据库客户端**不看 argv 里的地址**，能不能自动建连取决于那个
+/// 客户端。所以话只说到"已交给 X"，同时把不含密码的连接信息放进剪贴板，让手动粘贴有路可走
+/// （与 `connect_target` 的终端降级同一口径）。
+fn open_database_target(
+    core: &AppCore,
+    user: &str,
+    ref_id: &str,
+    url: &str,
+    protocol: &str,
+    action: &str,
+    ref_kind: &str,
+) -> Result<ActionReply> {
+    let addr = external_tools::sanitize_address(url);
+    let note = match external_tools::open(&core.db, Kind::Database, protocol, &addr) {
+        Ok(outcome) => outcome.tool_note("数据库工具"),
+        Err(_) => {
+            super::accounts::write_clipboard(&addr)?;
+            return Ok(ActionReply::ok(
+                action,
+                "系统未能打开该数据库地址：非秘密连接信息（不含密码）已复制到剪贴板，请在客户端里手动连接",
+            ));
+        }
+    };
+    super::accounts::write_clipboard(&addr)?;
+    audit(&core, Some(user), action, Some(ref_kind), Some(ref_id), true, None, "launcher");
+    Ok(ActionReply {
+        opened: Some(quick_launcher::query::address_summary(&addr)),
+        ..ActionReply::ok(action, &format!("{note}；非秘密连接信息（不含密码）已复制到剪贴板"))
+    })
+}
+
+/// 用配置好的浏览器打开；没配置或那个浏览器已失效时交系统默认（`external_tools::open` 里判定）。
+fn open_in_browser(core: &AppCore, url: &str) -> Result<external_tools::Outcome> {
+    external_tools::open(&core.db, Kind::Browser, "", url)
 }
 
 /// 打开并安全填充：
@@ -209,24 +252,29 @@ pub fn open_and_fill(target_id: String, credential_id: Option<String>) -> Result
 
     if !extension_gate(&core) {
         // 明确降级：只打开网站，并提供单独的用户名/密码复制动作
-        open_in_browser(&url)?;
+        let outcome = open_in_browser(&core, &url)?;
         audit(&core, Some(&user), "accounts.fill.unavailable", Some("item"), Some(&item_id), false, Some("EXTENSION_UNAVAILABLE"), "launcher");
         return Ok(ActionReply {
             opened: Some(parser_origin_for_log(&url)),
-            message: "浏览器扩展未就绪：已打开网站。请手动输入，或使用「复制用户名」「复制密码」两个单独动作。".to_string(),
+            message: format!(
+                "浏览器扩展未就绪：{}打开网站。请手动输入，或使用「复制用户名」「复制密码」两个单独动作。",
+                outcome.tool_note("浏览器")
+            ),
             ..ActionReply::fail("open_and_fill", &AppError::ExtensionUnavailable)
         });
     }
 
     let (ticket, binding) = ql::issue_fill_ticket(&core.db, &core.tickets, &core.vault, &user, &item_id)?;
-    open_in_browser(&url)?;
+    // 填充票绑的是**那一个浏览器**的 origin：用系统默认打开，很可能根本不是装了扩展的那一枚，
+    // 所以这里同样要认「外部工具」页配的浏览器。
+    let outcome = open_in_browser(&core, &url)?;
     repo::touch_last_accessed(&core.db, &item_id)?;
     audit(&core, Some(&user), "accounts.fill.request", Some("item"), Some(&item_id), true, None, "launcher");
     let expires_in = (ticket.expires_at - chrono::Utc::now().timestamp()).max(0);
     Ok(ActionReply {
         fill: Some(super::FillGrant { status: "awaiting".into(), origin: parser_origin(&binding.origin), expires_in_seconds: expires_in }),
         opened: Some(parser_origin(&binding.origin)),
-        ..ActionReply::ok("open_and_fill", "已打开网站，等待浏览器扩展凭票据填充")
+        ..ActionReply::ok("open_and_fill", &format!("{}打开网站，等待浏览器扩展凭票据填充", outcome.tool_note("浏览器")))
     })
 }
 
@@ -238,18 +286,22 @@ fn parser_origin_for_log(url: &str) -> String {
     quick_launcher::query::address_summary(url)
 }
 
-/// 终端/数据库类目标的一键连接入口。
+/// 非 web 类凭据的一键连接入口：终端交终端档、数据库交引擎档。
 /// 绝不把口令或私钥口令放进命令行参数、Shell 历史或日志。
+///
+/// 名字从 `connect_terminal` 改过来：这一条一直同时服务 terminal、database 与导入来的其它类型，
+/// 叫"终端"会让下一位读者以为数据库类不该走这里（账号中心的分流注释立的正是
+/// "文案得跟命令真正做的事一致"）。
 #[tauri::command]
-pub fn connect_terminal(item_id: String) -> Result<ActionReply> {
+pub fn connect_target(item_id: String) -> Result<ActionReply> {
     let core = crate::state::core();
     let user = core.check_session()?;
     ql::authorize(&core.db, &core.vault, &user, QuickAction::OpenTarget, &item_id)?;
     let row = repo::get_item_row(&core.db, &user, &item_id)?;
-    let (host, port, protocol, username) = core.vault.with_vk(|vk| {
+    let (host, port, protocol, username, url, database_name) = core.vault.with_vk(|vk| {
         let m = repo::target_meta(vk, &core.db, &row.target_id)?;
         let p = repo::item_payload(vk, &core.db, &item_id)?;
-        Ok::<_, AppError>((m.host, m.port, m.protocol, p.username))
+        Ok::<_, AppError>((m.host, m.port, m.protocol, p.username, m.url, m.database_name))
     })?;
     if host.is_empty() {
         return Err(AppError::InvalidInput);
@@ -258,31 +310,45 @@ pub fn connect_terminal(item_id: String) -> Result<ActionReply> {
     if repo::is_insecure_protocol(&row.item_type, &protocol) && !allow_weak {
         return Err(AppError::InsecureProtocolDisabled);
     }
+    let authority = if port.is_empty() { host.clone() } else { format!("{host}:{port}") };
     match row.item_type.as_str() {
         "terminal" => {
             let p = if protocol.is_empty() { "ssh".to_string() } else { protocol.clone() };
             if p == "ssh" {
-                let host_label = if port.is_empty() { host.clone() } else { format!("{host}:{port}") };
-                let url = format!("ssh://{username}@{host_label}");
-                match open::that(&url) {
-                    Ok(_) => {
+                let url = format!("ssh://{username}@{authority}");
+                match external_tools::open(&core.db, Kind::Terminal, "", &url) {
+                    Ok(outcome) => {
                         audit(&core, Some(&user), "accounts.connect", Some("item"), Some(&item_id), true, None, "launcher");
-                        Ok(ActionReply { opened: Some(format!("ssh://{host}")), ..ActionReply::ok("open_target", "已通过系统终端打开 SSH 连接入口；密码需在终端中由你本人输入，应用不会写入命令行") })
+                        Ok(ActionReply {
+                            opened: Some(format!("ssh://{host}")),
+                            ..ActionReply::ok("open_target", &format!("{}打开 SSH 连接入口；密码需在终端中由你本人输入，应用不会写入命令行", outcome.tool_note("终端工具")))
+                        })
                     }
                     Err(_) => {
-                        let info = format!("{p}://{}@{}{}", username, host, if port.is_empty() { String::new() } else { format!(":{port}") });
+                        let info = format!("{p}://{username}@{authority}");
                         super::accounts::write_clipboard(&info)?;
                         Ok(ActionReply { opened: None, ..ActionReply::ok("open_target", "系统未能直接打开终端：已复制非秘密连接信息（不含密码），请在终端中粘贴并手动完成认证") })
                     }
                 }
             } else {
-                let info = format!("{p}://{host}{}", if port.is_empty() { String::new() } else { format!(":{port}") });
+                let info = format!("{p}://{authority}");
                 super::accounts::write_clipboard(&info)?;
                 Ok(ActionReply::ok("open_target", &format!("{p} 需由系统客户端完成：已复制主机信息（不含密码）")))
             }
         }
+        "database" => {
+            // 台账里存过原文地址就优先用它（`jdbc:oracle:thin:@//…` 这类形状派生不出来）；
+            // 只有分栏的导入记录才按 protocol/host/port/库名 拼回去。
+            let addr = if url.trim().is_empty() {
+                let tail = if database_name.trim().is_empty() { String::new() } else { format!("/{database_name}") };
+                format!("{}://{authority}{tail}", if protocol.is_empty() { "jdbc" } else { protocol.as_str() })
+            } else {
+                url.clone()
+            };
+            open_database_target(&core, &user, &item_id, &addr, &protocol, "open_target", "item")
+        }
         other => {
-            let info = format!("{}@{}{}", username, host, if port.is_empty() { String::new() } else { format!(":{port}") });
+            let info = format!("{username}@{authority}");
             super::accounts::write_clipboard(&info)?;
             Ok(ActionReply::ok("open_target", &format!("{other}：已复制非秘密连接信息（不含密码），请使用本机已安装的客户端连接")))
         }

@@ -209,7 +209,7 @@ describe('四颗工具钮各自做的事', () => {
 });
 
 describe('齿轮下拉：四个设置页 + 一个工具页', () => {
-  it('全量权限下五项按「设置页 → 分隔线 → 工具页」排列', () => {
+  it('全量权限下六项按「设置页 → 分隔线 → 工具页」排列', () => {
     renderTopBar();
     const menu = openMenu('设置');
     expect(within(menu).getAllByRole('menuitem').map((el) => el.textContent)).toEqual([
@@ -217,6 +217,7 @@ describe('齿轮下拉：四个设置页 + 一个工具页', () => {
       PAGE_META.appearance.label,
       PAGE_META.backup.label,
       PAGE_META.update.label,
+      PAGE_META.tools.label,
       PAGE_META.launcher.label,
     ]);
     expect(within(menu).getAllByRole('separator')).toHaveLength(1);
@@ -258,6 +259,7 @@ describe('齿轮下拉：四个设置页 + 一个工具页', () => {
       PAGE_META.security.label,
       PAGE_META.appearance.label,
       PAGE_META.update.label,
+      PAGE_META.tools.label,
       PAGE_META.launcher.label,
     ]);
   });

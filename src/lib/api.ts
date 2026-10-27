@@ -19,6 +19,8 @@ import type {
   ExportPreview,
   ExportResult,
   ExtensionChannelStatus,
+  ExternalTool,
+  ToolKind,
   ExtensionHostInstallResult,
   ExtensionHostStatus,
   ExtensionHostUninstallResult,
@@ -193,10 +195,17 @@ export const api = {
   copyUsername: (itemId: string) => call<ActionReply>('copy_username', { itemId }),
   copyPassword: (itemId: string) => call<ActionReply>('copy_password', { itemId }),
 
-  // —— 打开 / 填充 / 终端连接 ——
+  // —— 打开 / 填充 / 按配置的工具有跳转 ——
   openTarget: (targetId: string) => call<ActionReply>('open_target', { targetId }),
   openAndFill: (targetId: string, credentialId?: string) => call<ActionReply>('open_and_fill', { targetId, credentialId }),
-  connectTerminal: (itemId: string) => call<ActionReply>('connect_terminal', { itemId }),
+  connectTarget: (itemId: string) => call<ActionReply>('connect_target', { itemId }),
+
+  // —— 外部工具档 ——
+  externalTools: () => call<ExternalTool[]>('list_external_tools'),
+  setExternalTool: (kind: ToolKind, appPath: string) => call<ExternalTool>('set_external_tool', { kind, appPath }),
+  upsertDatabaseTool: (id: string | null, engine: string, label: string, appPath: string) =>
+    call<ExternalTool>('upsert_database_tool', { id, engine, label, appPath }),
+  deleteExternalTool: (id: string) => call<void>('delete_external_tool', { id }),
 
   // —— 全局快捷启动器 ——
   quickSearch: (query: string) => call<SearchReply>('quick_search', { query }),

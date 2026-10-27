@@ -2,10 +2,10 @@ import type { IconName } from '../components/ui/icons';
 import { PERM } from './permissions';
 
 /**
- * 主窗口十一个落点。
+ * 主窗口十二个落点。
  * - accounts：外部系统账号台账；
  * - users/roles/menus/permissions/audit：顶部「系统管理」下的五个二级页，左侧竖排导航；
- * - security/appearance/backup/update：齿轮「设置」下拉第一组的四个独立页；
+ * - security/appearance/backup/update/tools：齿轮「设置」下拉第一组的五个独立页；
  * - launcher：齿轮下拉第二组的工具页。
  * 本文件只保留「页面名 / 说明 / 图标 / 所需权限」这张静态表；入口是否出现由
  * lib/menuTree.ts 结合 menu_nodes 表与当前权限推导。
@@ -21,10 +21,11 @@ export type PageKey =
   | 'appearance'
   | 'backup'
   | 'update'
+  | 'tools'
   | 'launcher';
 
 export type AdminPageKey = Extract<PageKey, 'users' | 'roles' | 'menus' | 'permissions' | 'audit'>;
-export type SettingsPageKey = Extract<PageKey, 'security' | 'appearance' | 'backup' | 'update'>;
+export type SettingsPageKey = Extract<PageKey, 'security' | 'appearance' | 'backup' | 'update' | 'tools'>;
 export type TopKey = 'accounts' | 'system';
 export type GearPageKey = SettingsPageKey | Extract<PageKey, 'launcher'>;
 
@@ -81,6 +82,10 @@ export const PAGE_META: Record<PageKey, PageMeta> = {
     label: '系统更新',
     desc: '更新通道、签名校验与下载安装；下载/安装按钮另需 system.update.install 权限。',
   },
+  tools: {
+    label: '外部工具',
+    desc: '配置打开账号时用哪个本机应用：浏览器、终端，以及按数据库引擎分的客户端。留空即用系统默认；这里的配置对本机所有使用者生效，换机后路径若已失效会自动回退系统默认。',
+  },
   launcher: {
     label: '快速启动器',
     desc: '快捷键由 Rust 后端注册并检测冲突；应用需保持后台运行才能唤起浮层。',
@@ -88,7 +93,7 @@ export const PAGE_META: Record<PageKey, PageMeta> = {
 };
 
 /**
- * 十一个落点各自的权限门槛。
+ * 十二个落点各自的权限门槛。
  * 左上角入口（accounts）与「系统管理」二级页还额外受菜单节点与父级菜单键约束，
  * 这部分在 menuTree.ts 里叠加，不写进这张表。
  */
@@ -103,6 +108,9 @@ export const PAGE_REQUIRES: Record<PageKey, string[]> = {
   appearance: [],
   backup: [PERM.SYS_BACKUP_MANAGE],
   update: [PERM.SYS_UPDATE_CONFIG],
+  // 这一页写的每一条都要 system.security.config（后端四条命令同一道门槛）；
+  // 入口再叠一枚菜单键。少了前者，点进去就是满屏 FORBIDDEN。
+  tools: [PERM.SYS_SECURITY_CONFIG],
   launcher: [PERM.MENU_QUICK_LAUNCHER, PERM.SYS_SECURITY_CONFIG],
 };
 
@@ -117,6 +125,7 @@ export const PAGE_ICONS: Record<PageKey, IconName> = {
   appearance: 'palette',
   backup: 'database',
   update: 'refresh',
+  tools: 'externalLink',
   launcher: 'zap',
 };
 
@@ -134,7 +143,7 @@ export const ADMIN_ITEMS: NavItem<AdminPageKey>[] = [
   { key: 'audit', ...PAGE_META.audit, icon: PAGE_ICONS.audit, requires: PAGE_REQUIRES.audit },
 ];
 
-/** 齿轮下拉第一组：四个独立设置页。 */
+/** 齿轮下拉第一组：五个独立设置页。 */
 export const SETTINGS_ITEMS: NavItem<SettingsPageKey>[] = [
   {
     key: 'security',
@@ -150,6 +159,7 @@ export const SETTINGS_ITEMS: NavItem<SettingsPageKey>[] = [
   },
   { key: 'backup', ...PAGE_META.backup, icon: PAGE_ICONS.backup, requires: PAGE_REQUIRES.backup },
   { key: 'update', ...PAGE_META.update, icon: PAGE_ICONS.update, requires: PAGE_REQUIRES.update },
+  { key: 'tools', ...PAGE_META.tools, icon: PAGE_ICONS.tools, requires: PAGE_REQUIRES.tools },
 ];
 
 /**
@@ -176,7 +186,7 @@ export function isSettingsPage(page: PageKey): page is SettingsPageKey {
   return SETTINGS_ITEMS.some((item) => item.key === page);
 }
 
-/** 齿轮下拉覆盖的五个落点（四个设置页 + 一个工具页）。 */
+/** 齿轮下拉覆盖的六个落点（五个设置页 + 一个工具页）。 */
 export function isGearPage(page: PageKey): page is GearPageKey {
   return isSettingsPage(page) || page === 'launcher';
 }

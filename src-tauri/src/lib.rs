@@ -13,6 +13,7 @@ pub mod commands;
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod external_tools;
 pub mod fill_host;
 pub mod importexport;
 pub mod ipc;
@@ -513,11 +514,15 @@ pub fn run() {
             commands::launcher::quick_action,
             commands::launcher::open_target,
             commands::launcher::open_and_fill,
-            commands::launcher::connect_terminal,
+            commands::launcher::connect_target,
             commands::launcher::launcher_preferences,
             commands::launcher::set_launcher_shortcut,
             commands::launcher::set_launcher_enabled,
             commands::launcher::launcher_visibility,
+            commands::external_tools::list_external_tools,
+            commands::external_tools::set_external_tool,
+            commands::external_tools::upsert_database_tool,
+            commands::external_tools::delete_external_tool,
             commands::system::get_settings,
             commands::system::update_setting,
             commands::system::get_theme,

@@ -27,6 +27,7 @@ export const queryKeys = {
   similar: (addr: string) => ['similar', addr] as const,
   security: ['security'] as const,
   settings: ['settings'] as const,
+  externalTools: ['externalTools'] as const,
   roles: ['roles'] as const,
   rolesAdmin: ['rolesAdmin'] as const,
   permissionsCatalog: ['permissionsCatalog'] as const,

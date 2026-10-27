@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   deleteItem: vi.fn(),
   deleteTarget: vi.fn(),
   openAndFill: vi.fn(),
-  connectTerminal: vi.fn(),
+  connectTarget: vi.fn(),
   copyUsername: vi.fn(),
   copyPassword: vi.fn(),
   targetDetail: vi.fn(),
@@ -86,12 +86,13 @@ function item(n: number, over: Partial<ItemView> = {}): ItemView {
   };
 }
 
-/** t-1 下 12 条：跨过一页，才能同时验分页与"筛选后页数变少"。 */
+/** t-1 下 12 条：跨过一页，才能同时验分页与"筛选后页数变少"。
+ *  5 号是终端、6 号是数据库：这两类都不该走填充票（后端只对 web 发票据）。 */
 const T1_ITEMS: ItemView[] = Array.from({ length: 12 }, (_, k) =>
   item(k + 1, {
     favorite: k + 1 === 3,
     isDefaultForCurrentUser: k + 1 === 1,
-    itemType: k + 1 === 5 ? 'terminal' : 'web',
+    itemType: k + 1 === 5 ? 'terminal' : k + 1 === 6 ? 'database' : 'web',
     status: k + 1 === 7 ? 'disabled' : 'active',
   }),
 );
@@ -132,7 +133,7 @@ beforeEach(() => {
   mocks.deleteItem.mockResolvedValue(undefined);
   mocks.deleteTarget.mockResolvedValue(undefined);
   mocks.openAndFill.mockResolvedValue({ ok: true, message: '已打开' });
-  mocks.connectTerminal.mockResolvedValue({ ok: true, message: '已连接终端' });
+  mocks.connectTarget.mockResolvedValue({ ok: true, message: '已按配置的工具跳转' });
   mocks.copyUsername.mockResolvedValue({ ok: true, message: '用户名已复制到剪贴板' });
   mocks.copyPassword.mockResolvedValue({ ok: true, message: '密码已复制到剪贴板' });
   mocks.targetDetail.mockImplementation((id: string) =>
@@ -378,7 +379,21 @@ describe('行内四颗动作钮只说后端做得到的事', () => {
     renderPage();
     await screen.findByText('账号-1');
     fireEvent.click(screen.getByRole('button', { name: '连接终端 账号-5' }));
-    await waitFor(() => expect(mocks.connectTerminal).toHaveBeenCalledWith('i-5'));
+    await waitFor(() => expect(mocks.connectTarget).toHaveBeenCalledWith('i-5'));
+    expect(mocks.openAndFill).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 数据库类以前点这颗按钮是死的：它走 openAndFill，而后端的填充票对非 web 直接判无效输入
+   * （quick_launcher/actions.rs::issue_fill_ticket）。这一轮把它接到 connect_target 的引擎档那条路上。
+   */
+  it('数据库类凭据交给工具档那条路，绝不请求填充票', async () => {
+    renderPage();
+    await screen.findByText('账号-1');
+    const button = screen.getByRole('button', { name: '用数据库工具打开 账号-6' });
+    expect(button.getAttribute('title')).toContain('系统默认');
+    fireEvent.click(button);
+    await waitFor(() => expect(mocks.connectTarget).toHaveBeenCalledWith('i-6'));
     expect(mocks.openAndFill).not.toHaveBeenCalled();
   });
 

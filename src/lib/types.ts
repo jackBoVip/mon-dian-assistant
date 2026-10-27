@@ -241,6 +241,23 @@ export interface MenuNode {
   permKey: string
 }
 
+// —— 外部工具档（commands/external_tools.rs）——
+
+/** 三档工具：浏览器与终端是固定两档，数据库按引擎可增删。 */
+export type ToolKind = 'browser' | 'terminal' | 'database'
+
+/** external_tools::ToolView（list_external_tools 返回；appPath 为空即未配置=交系统默认） */
+export interface ExternalTool {
+  id: string
+  kind: ToolKind
+  /** 仅数据库档非空，且已由后端归一化成小写引擎标识 */
+  engine: string
+  label: string
+  appPath: string
+  /** 由后端现查本机文件系统：配置过的应用在本机还在不在 */
+  pathExists: boolean
+}
+
 // —— accounts 命令 ——
 
 /** db::repo::TargetRow（list_targets / create_target / update_target / find_similar_targets 返回） */
@@ -501,7 +518,7 @@ export interface FillGrant {
   expiresInSeconds: number
 }
 
-/** commands::mod::ActionReply（open_target、open_and_fill、copy_username、copy_password、connect_terminal、quick_action 返回） */
+/** commands::mod::ActionReply（open_target、open_and_fill、copy_username、copy_password、connect_target、quick_action 返回） */
 export interface ActionReply {
   action: string
   ok: boolean

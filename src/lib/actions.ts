@@ -32,4 +32,9 @@ export const openAndFill = (targetId: string, credentialId?: string) =>
   runReplyAction(() => api.openAndFill(targetId, credentialId));
 export const copyUsername = (itemId: string) => runReplyAction(() => api.copyUsername(itemId));
 export const copyPassword = (itemId: string) => runReplyAction(() => api.copyPassword(itemId));
-export const connectTerminal = (itemId: string) => runReplyAction(() => api.connectTerminal(itemId));
+/**
+ * 非 web 类凭据的跳转（终端、数据库、导入来的其它类型）：由后端按「外部工具」那页的配置
+ * 决定交给哪个应用，没配置或那个应用在本机已经找不到了就交系统默认。
+ * web 类才走 openAndFill——填充票只认 web（quick_launcher/actions.rs::issue_fill_ticket）。
+ */
+export const connectTarget = (itemId: string) => runReplyAction(() => api.connectTarget(itemId));

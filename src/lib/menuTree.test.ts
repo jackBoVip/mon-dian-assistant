@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildNav,
@@ -9,7 +11,7 @@ import {
 import { PERM } from './permissions';
 import { PAGE_ICONS, PAGE_META } from './pageMeta';
 import type { MenuNode } from './types';
-import { seedMenuNodes } from '../test/menuFixtures';
+import { SEED_MENU_NODES, seedMenuNodes } from '../test/menuFixtures';
 
 const NODE_PERMS = seedMenuNodes().map((node) => node.permKey);
 const FULL = new Set<string>([...Object.values(PERM), ...NODE_PERMS]);
@@ -37,31 +39,18 @@ function patch(nodes: MenuNode[], id: string, changes: Partial<MenuNode>): MenuN
 }
 
 describe('全量种子 + 全量权限：导航就是那张确认稿', () => {
-  it('顶栏两项、左栏五项、齿轮四 + 一，顺序照 sort_order', () => {
+  it('顶栏两项、左栏五项、齿轮五 + 一，顺序照 sort_order', () => {
     const nav = navOf(seedMenuNodes());
     expect(nav.top.map((entry) => entry.key)).toEqual(['accounts', 'system']);
     expect(pageKeys(nav.admin)).toEqual(['users', 'roles', 'menus', 'permissions', 'audit']);
-    expect(pageKeys(nav.settings)).toEqual(['security', 'appearance', 'backup', 'update']);
+    expect(pageKeys(nav.settings)).toEqual(['security', 'appearance', 'backup', 'update', 'tools']);
     expect(pageKeys(nav.utilities)).toEqual(['launcher']);
   });
 
-  it('可达集合由实际入口推导，十一页一个不少', () => {
+  /** 名单从 `PAGE_META` 推，不手写第二份：加一页时这里自动跟上，也不会"少列一页也算绿"。 */
+  it('可达集合就是全部落点，一页不少', () => {
     const nav = navOf(seedMenuNodes());
-    expect([...nav.reachable].sort()).toEqual(
-      [
-        'accounts',
-        'audit',
-        'appearance',
-        'backup',
-        'launcher',
-        'menus',
-        'permissions',
-        'roles',
-        'security',
-        'update',
-        'users',
-      ].sort(),
-    );
+    expect([...nav.reachable].sort()).toEqual(Object.keys(PAGE_META).sort());
   });
 
   it('图标与权限门槛都取自 pageMeta，不在本层重写', () => {
@@ -231,8 +220,9 @@ describe('自定义节点：别名入口', () => {
     const nav = navOf(nodes);
     expect(nav.admin.filter((entry) => entry.page === 'users')).toHaveLength(2);
     expect(nav.admin).toHaveLength(6);
-    // 可达集合是按页去重的：两条入口也只代表 users 这一页可进
-    expect(nav.reachable.size).toBe(11);
+    // 可达集合是按页去重的：两条入口也只代表 users 这一页可进。
+    // 枚数拿 PAGE_META 当尺，加一页时这里不必跟着人改一个数
+    expect(nav.reachable.size).toBe(Object.keys(PAGE_META).length);
   });
 });
 
@@ -340,5 +330,46 @@ describe('停用某枚菜单会不会把「菜单管理」页锁死', () => {
 
     const orphan = withAlias.filter((node) => node.id !== 'mn-top-system');
     expect(disableWouldLockOutMenusPage(orphan, 'mn-system-users')).toBe(true);
+  });
+});
+
+/**
+ * 夹具与迁移种子同源（**名单从被检对象推导**）。
+ *
+ * `test/menuFixtures.ts` 那份 15 枚节点是手抄的，一旦迁移加了页而它没跟上，上面这一整组
+ * 场景就全在演一份旧库——测试全绿，界面上却少一枚入口，而这条红线恰恰是交付方反复点过的
+ * "菜单只决定入口是否出现"。这里直接扫迁移 SQL，把种子真正的 id / nodeKey / pageKey 抽出来对。
+ */
+describe('夹具必须等于迁移种子（扫 SQL，不靠人记）', () => {
+  const ROOT = resolve(process.cwd());
+  const read = (name: string) => readFileSync(resolve(ROOT, 'migrations', name), 'utf8');
+  const ROW = /\('(mn-[^']+)', '([^']+)', (?:NULL|'[^']+'), '[^']*', (NULL|'[^']+'), '(page|group)'/g;
+
+  /** 0009 建表并种 15 枚；0011 把 page_key='data' 的那一枚连同派生权限一起摘掉；0014 加进外部工具。 */
+  function seededRows(): Array<{ id: string; nodeKey: string; pageKey: string | null; kind: string }> {
+    const rows = [...`${read('0009_menu_nodes.sql')}\n${read('0014_external_tools.sql')}`.matchAll(ROW)].map(
+      (m) => ({
+        id: m[1],
+        nodeKey: m[2],
+        pageKey: m[3] === 'NULL' ? null : m[3].replace(/'/g, ''),
+        kind: m[4],
+      })
+    );
+    expect(rows.length, '一行种子都没扫到，说明 INSERT 的写法变了，本条守卫要重写').toBeGreaterThanOrEqual(15);
+    return rows.filter((row) => !read('0011_remove_data_page.sql').includes(`'${row.nodeKey}'`) && row.pageKey !== 'data');
+  }
+
+  it('夹具的 id 与 nodeKey 与种子逐条一致', () => {
+    const seed = seededRows();
+    expect(SEED_MENU_NODES.map((n) => n.id).sort()).toEqual(seed.map((r) => r.id).sort());
+    expect(SEED_MENU_NODES.map((n) => n.nodeKey).sort()).toEqual(seed.map((r) => r.nodeKey).sort());
+  });
+
+  it('种子指向的落点全都在 pageMeta 里，pageMeta 里每一页也都有入口', () => {
+    const pages = seededRows()
+      .filter((row) => row.kind === 'page' && row.pageKey)
+      .map((row) => row.pageKey as string)
+      .sort();
+    expect(pages).toEqual(Object.keys(PAGE_META).sort());
   });
 });

@@ -53,6 +53,10 @@ pub enum AppError {
     /// 守卫文案由领域层给出：内置菜单不能删、分组名固定、一级顺序固定、关键入口不能停用。
     #[error("{0}")]
     MenuProtected(String),
+    /// 工具档的拒绝理由由领域层给出：路径不合法/本机不存在、固定两档不许删改。
+    /// 正文只说清哪一项不合格，不含路径本身（审计与界面都不该把整条本机路径抄来抄去）。
+    #[error("{0}")]
+    ExternalToolRejected(String),
     #[error("目标与凭据不属于同一记录")]
     TargetCredentialMismatch,
     #[error("该凭据已停用，不能作为默认账号")]
@@ -157,6 +161,7 @@ impl AppError {
             AppError::MenuLabelInvalid => "MENU_LABEL_INVALID",
             AppError::MenuPageUnknown => "MENU_PAGE_UNKNOWN",
             AppError::MenuProtected(_) => "MENU_PROTECTED",
+            AppError::ExternalToolRejected(_) => "EXTERNAL_TOOL_REJECTED",
             AppError::TargetCredentialMismatch => "TARGET_CREDENTIAL_MISMATCH",
             AppError::CredentialDisabled => "CREDENTIAL_DISABLED",
             AppError::NoDefaultCredential => "NO_DEFAULT_CREDENTIAL",

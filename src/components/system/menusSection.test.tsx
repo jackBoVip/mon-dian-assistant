@@ -105,12 +105,13 @@ beforeEach(() => {
 });
 
 describe('表格树', () => {
-  it('四个一级 + 十个二级，层级写在 data-depth 上', async () => {
+  it('一级与二级各就各位，层级写在 data-depth 上（枚数由夹具推导，加一页不必人改）', async () => {
     const { el } = await renderTree();
     const body = el.querySelector('tbody') as HTMLElement;
-    expect(body.querySelectorAll('tr')).toHaveLength(14);
-    expect(body.querySelectorAll('tr[data-depth="1"]')).toHaveLength(4);
-    expect(body.querySelectorAll('tr[data-depth="2"]')).toHaveLength(10);
+    const nodes = seedMenuNodes();
+    expect(body.querySelectorAll('tr')).toHaveLength(nodes.length);
+    expect(body.querySelectorAll('tr[data-depth="1"]')).toHaveLength(nodes.filter((n) => !n.parentId).length);
+    expect(body.querySelectorAll('tr[data-depth="2"]')).toHaveLength(nodes.filter((n) => n.parentId).length);
   });
 
   it('列居中，且没有「操作」列：四列表头，行里只剩一枚开关', async () => {

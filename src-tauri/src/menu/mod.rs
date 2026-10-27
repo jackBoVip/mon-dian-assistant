@@ -19,6 +19,7 @@ const BINDINGS: &[(&str, &str)] = &[
     ("appearance", "gear.settings"),
     ("backup", "gear.settings"),
     ("update", "gear.settings"),
+    ("tools", "gear.settings"),
     ("launcher", "gear.tools"),
 ];
 
@@ -305,11 +306,11 @@ mod tests {
     }
 
     #[test]
-    fn seed_has_four_roots_and_ten_leaves() {
+    fn seed_has_four_roots_and_eleven_leaves() {
         let nodes = list(&db()).unwrap();
-        assert_eq!(nodes.len(), 14);
+        assert_eq!(nodes.len(), 15);
         assert_eq!(nodes.iter().filter(|n| n.parent_id.is_none()).count(), 4);
-        assert_eq!(nodes.iter().filter(|n| n.parent_id.is_some()).count(), 10);
+        assert_eq!(nodes.iter().filter(|n| n.parent_id.is_some()).count(), 11);
         for (page, parent) in BINDINGS {
             let node = nodes
                 .iter()
@@ -319,7 +320,7 @@ mod tests {
         }
         assert!(nodes.iter().filter(|n| n.parent_id.is_some()).all(|n| n.builtin));
         assert_eq!(parent_key_for("accounts"), None);
-        assert_eq!(bindable_pages().len(), 10);
+        assert_eq!(bindable_pages().len(), 11);
     }
 
     #[test]
@@ -491,7 +492,7 @@ mod tests {
         let d = db();
         let builtin = by_key(&list(&d).unwrap(), "system.users").id.clone();
         assert!(matches!(delete(&d, &builtin), Err(AppError::MenuProtected(_))));
-        assert_eq!(list(&d).unwrap().len(), 14);
+        assert_eq!(list(&d).unwrap().len(), 15);
 
         let custom = create(&d, "别名", "users").unwrap();
         let perm_key = format!("menu.node.{custom}");
@@ -505,7 +506,7 @@ mod tests {
         };
         assert_eq!(count_perms(&d.lock_conn()), 1);
         delete(&d, &custom).unwrap();
-        assert_eq!(list(&d).unwrap().len(), 14);
+        assert_eq!(list(&d).unwrap().len(), 15);
         let conn = d.lock_conn();
         assert_eq!(count_perms(&conn), 0, "删入口必须同时删掉它的菜单权限");
         let grants: i64 = conn

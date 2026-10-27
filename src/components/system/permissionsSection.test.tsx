@@ -58,6 +58,15 @@ const CATALOG: PermissionRow[] = [
   { key: 'system.role.manage', name: '管理角色', type: 'action', description: null },
 ];
 
+/**
+ * 计数一律由夹具推出来，不手写数字：夹具本身已被 `menuTree.test.ts` 钉成等于迁移种子，
+ * 所以再加一页入口时，这里不会靠"少算一页也算绿"蒙过去。
+ */
+const MENU_KEYS = seedMenuNodes().length;
+const TOTAL_KEYS = MENU_KEYS + CATALOG.filter((row) => row.type === 'action').length;
+/** 授权覆盖率那一格显示的是四舍五入后的整数百分比。 */
+const pct = (selected: number) => String(Math.round((selected / TOTAL_KEYS) * 100));
+
 /** tsconfig 的 target 还没有 Array.prototype.at，取最后一条通知一律走下标。 */
 function lastNotify() {
   const items = useNotify.getState().items;
@@ -128,15 +137,15 @@ describe('角色是 tabs，下面是当前角色的权限卡片', () => {
     expect(checkbox('审计员 · 账号中心')).toBeChecked();
     expect(checkbox('审计员 · 新建账号')).not.toBeChecked();
     expect(screen.queryByRole('checkbox', { name: '系统管理员 · 账号中心' })).toBeNull();
-    expect(screen.getByRole('status').textContent).toContain('已选 2 / 18 项');
+    expect(screen.getByRole('status').textContent).toContain(`已选 2 / ${TOTAL_KEYS} 项`);
   });
 
   it('每枚权限是一张卡片，不再是表格矩阵', async () => {
     await openSection();
     expect(screen.queryByRole('columnheader')).toBeNull();
-    // 14 枚菜单节点 + 4 项操作权限
-    expect(screen.getAllByRole('checkbox')).toHaveLength(18);
-    expect(document.querySelectorAll('label[data-selected]')).toHaveLength(18);
+    // 每一枚菜单节点 + 每一项操作权限各一枚卡片，枚数跟着夹具走
+    expect(screen.getAllByRole('checkbox')).toHaveLength(TOTAL_KEYS);
+    expect(document.querySelectorAll('label[data-selected]')).toHaveLength(TOTAL_KEYS);
   });
 
   it('菜单权限按一级/二级分区，二级卡片挂在父级分组里', async () => {
@@ -153,7 +162,7 @@ describe('角色是 tabs，下面是当前角色的权限卡片', () => {
     }
     expect(within(system).getAllByText('一级')).toHaveLength(1);
     expect(within(system).getAllByText('二级')).toHaveLength(5);
-    // 14 枚菜单键全部来自节点自己的 permKey
+    // 每一枚菜单键都来自节点自己的 permKey
     expect(screen.getByText('menu.node.system.permissions')).toBeInTheDocument();
     expect(screen.getByText('menu.accounts')).toBeInTheDocument();
   });
@@ -169,22 +178,22 @@ describe('角色是 tabs，下面是当前角色的权限卡片', () => {
     const actions = screen.getByRole('group', { name: '操作权限' });
     const coverage = screen.getByRole('group', { name: '授权覆盖率' });
     expect(within(menu).getByText('1')).toBeInTheDocument();
-    expect(within(menu).getByText('/ 14')).toBeInTheDocument();
+    expect(within(menu).getByText(`/ ${MENU_KEYS}`)).toBeInTheDocument();
     expect(within(actions).getByText('4')).toBeInTheDocument();
     expect(within(actions).getByText('/ 4')).toBeInTheDocument();
-    expect(within(coverage).getByText('28')).toBeInTheDocument();
+    expect(within(coverage).getByText(pct(5))).toBeInTheDocument();
     expect(within(coverage).getByText('%')).toBeInTheDocument();
 
     fireEvent.click(checkbox('系统管理员 · 账号中心'));
     expect(within(menu).getByText('0')).toBeInTheDocument();
-    expect(within(coverage).getByText('22')).toBeInTheDocument();
+    expect(within(coverage).getByText(pct(4))).toBeInTheDocument();
   });
 
   it('计数随勾选实时变化', async () => {
     await openSection();
-    expect(screen.getByRole('status').textContent).toContain('已选 5 / 18 项');
+    expect(screen.getByRole('status').textContent).toContain(`已选 5 / ${TOTAL_KEYS} 项`);
     fireEvent.click(checkbox('系统管理员 · 账号中心'));
-    expect(screen.getByRole('status').textContent).toContain('已选 4 / 18 项');
+    expect(screen.getByRole('status').textContent).toContain(`已选 4 / ${TOTAL_KEYS} 项`);
   });
 });
 
@@ -233,7 +242,7 @@ describe('卡片状态：未选灰面，选中主色染色面', () => {
       expect(checkbox(`系统管理员 · ${label}`)).toBeChecked();
       expect(checkbox(`系统管理员 · ${label}`)).toBeEnabled();
     }
-    expect(screen.getByRole('status').textContent).toContain('已选 11 / 18 项');
+    expect(screen.getByRole('status').textContent).toContain(`已选 11 / ${TOTAL_KEYS} 项`);
 
     fireEvent.click(child);
     expect(child).not.toBeChecked();
@@ -266,9 +275,14 @@ describe('保存按"哪一类脏了"分开提交', () => {
         permOf('settings.appearance'),
         permOf('settings.backup'),
         permOf('settings.update'),
+        permOf('settings.tools'),
       ]),
     );
-    expect(sent).toHaveLength(6);
+    // 「设置」那一棵子树（一级 + 它的各枚二级）连同已经勾着的账号中心
+    const settingsTree = seedMenuNodes().filter(
+      (node) => node.nodeKey === 'gear.settings' || node.nodeKey.startsWith('settings.'),
+    );
+    expect(sent).toHaveLength(settingsTree.length + 1);
     expect(sent).not.toContain('accounts.read');
     expect(mocks.setRoleActionPermissions).not.toHaveBeenCalled();
     await waitFor(() => expect(lastNotify()?.text).toBe('权限已保存'));

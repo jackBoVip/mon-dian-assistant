@@ -1,7 +1,7 @@
 import type { MenuNode } from '../lib/types';
 
 /**
- * 与 `migrations/0009_menu_nodes.sql`（经 0011 移除导入/导出页后）的种子逐行对齐的 14 枚节点。
+ * 与 `migrations/0009_menu_nodes.sql`（经 0011 移除导入/导出页、0014 加进外部工具后）的种子逐行对齐的 15 枚节点。
  * 测试夹具只改 status / label / sortOrder 来表达场景，节点身份保持稳定。
  * permKey 与 `menu::perm_key_for` 同源：三枚旧键沿用，其余为 menu.node.<nodeKey>。
  */
@@ -161,6 +161,18 @@ export const SEED_MENU_NODES: MenuNode[] = [
     status: 'active',
     sortOrder: 40,
     permKey: 'menu.node.settings.update',
+  },
+  {
+    id: 'mn-settings-tools',
+    nodeKey: 'settings.tools',
+    parentId: 'mn-gear-settings',
+    label: '外部工具',
+    pageKey: 'tools',
+    kind: 'page',
+    builtin: true,
+    status: 'active',
+    sortOrder: 50,
+    permKey: 'menu.node.settings.tools',
   },
   {
     id: 'mn-tools-launcher',

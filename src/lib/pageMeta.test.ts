@@ -28,11 +28,12 @@ const PAGES: PageKey[] = [
   'appearance',
   'backup',
   'update',
+  'tools',
   'launcher',
 ];
 
-describe('十一个落点与页面文案', () => {
-  it('PAGE_META 的键顺序就是信息架构的顺序（系统管理五页 + 四个设置页 + 一个工具页）', () => {
+describe('十二个落点与页面文案', () => {
+  it('PAGE_META 的键顺序就是信息架构的顺序（系统管理五页 + 五个设置页 + 一个工具页）', () => {
     expect(Object.keys(PAGE_META)).toEqual(PAGES);
   });
 
@@ -63,12 +64,14 @@ describe('十一个落点与页面文案', () => {
   });
 });
 
-describe('权限门槛与图标：十一页一页不缺', () => {
+describe('权限门槛与图标：十二页一页不缺', () => {
   it('PAGE_REQUIRES 覆盖全部落点，空数组只代表「无需额外权限」', () => {
     expect(Object.keys(PAGE_REQUIRES)).toEqual(PAGES);
     expect(PAGE_REQUIRES.appearance).toEqual([]);
     expect(PAGE_REQUIRES.accounts).toEqual([PERM.MENU_ACCOUNTS]);
     expect(PAGE_REQUIRES.launcher).toEqual([PERM.MENU_QUICK_LAUNCHER, PERM.SYS_SECURITY_CONFIG]);
+    // 外部工具页的四条写命令都要 system.security.config，入口不给这枚权限就是满屏 FORBIDDEN
+    expect(PAGE_REQUIRES.tools).toEqual([PERM.SYS_SECURITY_CONFIG]);
   });
 
   it('PAGE_ICONS 每页一枚，左栏与齿轮渲染不做回落', () => {
@@ -84,21 +87,29 @@ describe('权限门槛与图标：十一页一页不缺', () => {
     }
   });
 
-  it('三张表合起来正好覆盖除账号中心外的十页，且没有重复', () => {
+  it('三张表合起来正好覆盖除账号中心外的十一页，且没有重复', () => {
     const keys = [...ADMIN_ITEMS, ...SETTINGS_ITEMS, ...UTILITY_ITEMS].map((item) => item.key);
     expect(keys).toEqual(PAGES.filter((page) => page !== 'accounts'));
     expect(new Set(keys).size).toBe(keys.length);
   });
+
+  /** 文案许诺的每一条都要后端真做得到：留空=系统默认、失效=回退、本机共用=安装级。 */
+  it('外部工具页把三条口径写进说明，且都与 external_tools::plan_launch 的三态对得上', () => {
+    expect(PAGE_META.tools.label).toBe('外部工具');
+    expect(PAGE_META.tools.desc).toContain('留空即用系统默认');
+    expect(PAGE_META.tools.desc).toContain('本机所有使用者');
+    expect(PAGE_META.tools.desc).toContain('回退系统默认');
+  });
 });
 
 describe('页面归属判定', () => {
-  it('五个系统管理页归左栏，四个设置页与一个工具页归齿轮', () => {
+  it('五个系统管理页归左栏，五个设置页与一个工具页归齿轮', () => {
     for (const key of ['users', 'roles', 'menus', 'permissions', 'audit'] as const) {
       expect(isAdminPage(key), key).toBe(true);
       expect(isSettingsPage(key), key).toBe(false);
       expect(isGearPage(key), key).toBe(false);
     }
-    for (const key of ['security', 'appearance', 'backup', 'update'] as const) {
+    for (const key of ['security', 'appearance', 'backup', 'update', 'tools'] as const) {
       expect(isSettingsPage(key), key).toBe(true);
       expect(isGearPage(key), key).toBe(true);
       expect(isAdminPage(key), key).toBe(false);
