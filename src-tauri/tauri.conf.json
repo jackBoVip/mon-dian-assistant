@@ -42,6 +42,7 @@
     "longDescription": "蒙电信产助手：账号台账、全局快捷搜索与多条件查询、浏览器安全填充、终端连接入口，全部数据本机加密存储。",
     "copyright": "© 内蒙古电力业务场景项目组",
     "license": "Proprietary",
+    "macOS": { "signingIdentity": "-" },
     "linux": { "deb": { "section": "utils" } },
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" },

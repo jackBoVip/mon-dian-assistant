@@ -154,6 +154,33 @@ jobs:
         if: runner.os == 'macOS'
         run: npx tauri build --bundles app,dmg
 
+      - name: macOS 封条自检（缺 sealed Resources 就别让坏包出厂）
+        if: runner.os == 'macOS'
+        run: |
+          # v1.0.0 实撞（2026-10-27）：CI 的四个 job 全绿，发出去的 dmg 却打不开，报"已损坏"。
+          # 根因是 bundle.macOS 段为空 → bundler 跳过签名，包里只剩链接器那层
+          # `adhoc,linker-signed` 且 `Sealed Resources=none`；macOS 对 app bundle 要求有封条，
+          # 缺它给出的正是那句"损坏"。所以这里把判据钉在**产物**上，不钉在步骤退出码上。
+          set -euo pipefail
+          app="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$app" || { echo "::error::bundle/macos 下没有 .app"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$app"
+          # 光看退出码不够：未封条的包在 --verify 不带 --strict 时也能过。
+          # 直接钉那个字段本身 —— `Sealed Resources=none` 就是这次的病征。
+          dump="$(codesign -dvvv "$app" 2>&1)"
+          echo "$dump" | grep -E 'Sealed Resources version=[0-9]+' \
+            || { echo "::error::签名里没有 sealed Resources（=bundler 没签名，装上去会报「已损坏」）"; exit 1; }
+          # dmg 是真正发出去的那一面：从镜像里再验一次，别只信构建目录
+          dmg="$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$dmg" || { echo "::error::bundle/dmg 下没有 .dmg"; exit 1; }
+          mp="$(hdiutil attach -nobrowse -readonly "$dmg" | awk '/\/Volumes\//{print $NF}' | tail -1)"
+          set +e
+          codesign --verify --deep --strict "${mp}/$(basename "$app")"; rc=$?
+          set -e
+          hdiutil detach "$mp" -quiet
+          [ "$rc" -eq 0 ] || { echo "::error::dmg 内的 app 校验不过，使用者拿到的就是打不开的那一份"; exit 1; }
+          echo "封条自检通过：$app 与 dmg 内的同一份都通过 codesign --verify --deep --strict"
+
       - name: build Windows（nsis 与 msi 分两次调用）
         if: runner.os == 'Windows'
         shell: pwsh
