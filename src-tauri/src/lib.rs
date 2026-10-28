@@ -26,6 +26,7 @@ pub mod secfile;
 pub mod settings;
 pub mod state;
 pub mod update;
+pub mod window_chrome;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -411,6 +412,10 @@ pub fn run() {
             // 而返回 Err 会变成 `App::run_return` 里的一句 panic；本项目 release 是 `panic = "abort"`，
             // 于是"数据目录不可用""库打不开""迁移失败"这些可恢复故障统一表现为进程消失、运维查不到原因。
             // 现在改为挂一条 BootFailure 并让事件循环继续：界面第一句就问它，问到就渲染失败页（含错误码与数据目录）。
+            // 窗口形态先办：Windows/Linux 在这一步去框（配置里那两行 titleBarStyle/hiddenTitle
+            // 是 macOS 专属，另两端不处理就会顶着系统标题栏与自绘顶栏叠成两条）。
+            // 它不依赖装配结果，所以放在最前面，且失败只记日志。
+            window_chrome::apply(app.handle());
             let handle = app.handle().clone();
             let data_dir = match resolve_data_dir(&handle) {
                 Ok(d) => d,
@@ -524,6 +529,7 @@ pub fn run() {
             commands::external_tools::upsert_database_tool,
             commands::external_tools::delete_external_tool,
             commands::system::get_settings,
+            commands::system::window_chrome,
             commands::system::update_setting,
             commands::system::get_theme,
             commands::system::set_theme,

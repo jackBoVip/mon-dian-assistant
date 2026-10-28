@@ -258,6 +258,19 @@ export interface ExternalTool {
   pathExists: boolean
 }
 
+// —— 窗口形态（commands/system.rs::window_chrome）——
+
+/**
+ * window_chrome::Chrome。`titleBarStyle`/`hiddenTitle` 是 macOS 专属配置，
+ * 所以 Windows/Linux 的框是后端在 setup 里运行时去掉的 —— 去框之后系统不再提供
+ * 窗口按钮，这三颗必须由界面画，而"该不该画"只有后端知道，故走这一枚查询。
+ */
+export interface WindowChrome {
+  customControls: boolean
+  /** std::env::consts::OS：'macos' | 'windows' | 'linux' */
+  platform: string
+}
+
 // —— accounts 命令 ——
 
 /** db::repo::TargetRow（list_targets / create_target / update_target / find_similar_targets 返回） */

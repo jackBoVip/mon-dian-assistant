@@ -23,6 +23,7 @@ import {
   ListTree,
   Lock,
   LockOpen,
+  Minus,
   Moon,
   LogOut,
   PanelLeft,
@@ -33,6 +34,8 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Square,
+  SquareStack,
   Star,
   StarOff,
   Sun,
@@ -142,6 +145,11 @@ export const ICONS = {
   undo: Undo2,
   upload: Upload,
   close: X,
+  /* Windows / Linux 去框后由界面自绘的那三颗钮（macOS 用原生红绿灯，不显示这一组）。
+   * 最大化与还原是两枚不同画法：SquareStack 是"叠方框"，Windows 上还原态就是它。 */
+  windowMinimize: Minus,
+  windowMaximize: Square,
+  windowRestore: SquareStack,
   zap: Zap,
   user: User,
   users: Users,

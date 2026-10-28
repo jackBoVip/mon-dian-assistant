@@ -7,6 +7,7 @@ import { isAdminPage, isGearPage, type AdminPageKey, type PageKey, type TopKey }
 import { resolveAdminLanding, type NavTree } from '../lib/menuTree';
 import { ThemeMenu } from './ThemeMenu';
 import { ProfileModal } from './shell/ProfileModal';
+import { WindowControls } from './shell/WindowControls';
 import { ChangePasswordModal } from './shell/ChangePasswordModal';
 import { DropdownDivider, DropdownItem, Menu } from './ui/dropdown-menu';
 import { Button } from './ui/Button';
@@ -134,6 +135,10 @@ export function TopBar({ active, lastAdminPage, nav, onNavigate }: TopBarProps) 
             退出登录
           </DropdownItem>
         </Menu>
+
+        {/* Windows / Linux 去框后系统不再给窗口按钮，这三颗由界面补上；
+            macOS 有原生红绿灯，组件自己返回 null，一条都不渲染 */}
+        <WindowControls />
       </div>
 
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />

@@ -199,6 +199,13 @@ pub fn update_setting(key: String, value: String) -> Result<()> {
 }
 
 #[tauri::command]
+pub fn window_chrome() -> crate::window_chrome::Chrome {
+    // 免会话：窗口形态不属于数据，锁屏页与失败页同样要知道该不该画那三颗钮
+    //（否则"装配失败"那一屏在 Windows 上就没有任何关闭窗口的方式）。
+    crate::window_chrome::chrome()
+}
+
+#[tauri::command]
 pub fn get_theme() -> Result<ThemeView> {
     // 首次运行的同意闸门阶段还没有装配：这里必须回错误码，不能让进程 abort（见 state::core_or_await_consent）。
     let core = crate::state::core_or_await_consent()?;

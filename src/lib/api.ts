@@ -57,6 +57,7 @@ import type {
   CustomTheme,
   UpdateInfo,
   VaultStats,
+  WindowChrome,
 } from './types';
 
 /** 前端到 Rust 的唯一入口。前端不拼接 SQL、不持有密钥、不自行判定权限。 */
@@ -217,6 +218,8 @@ export const api = {
   setLauncherEnabled: (enabled: boolean) => call<LauncherShortcutStatus>('set_launcher_enabled', { enabled }),
 
   // —— 系统管理 ——
+  /** 窗口形态查询：免会话可用（锁屏页与启动失败页也要知道该不该画窗口按钮）。 */
+  windowChrome: () => call<WindowChrome>('window_chrome'),
   settings: () => call<SettingTuple[]>('get_settings'),
   updateSetting: (key: string, value: string) => call<void>('update_setting', { key, value }),
   theme: () => call<ThemeView>('get_theme'),
