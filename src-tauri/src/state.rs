@@ -56,6 +56,11 @@ impl AppCore {
         let _ = self.app_handle.set(handle);
     }
 
+    /// 取词助手要在非命令线程里读光标位置、解析资源目录，这两件事都要 `AppHandle`。
+    pub fn app_handle(&self) -> Option<tauri::AppHandle> {
+        self.app_handle.get().cloned()
+    }
+
     pub fn extension_ready(&self) -> bool {
         self.extension_ready.load(Ordering::Relaxed)
     }
@@ -90,12 +95,30 @@ impl AppCore {
             self.tickets.revoke_session(&sid);
         }
         self.vault.lock();
+        // 保险库一锁，题库连同 OCR 都必须立刻停：悬停线程每分钟几十次查库，
+        // 不能等它下一次 `check_session` 才发现。
+        crate::quiz::assistant::stop_for_lock();
         // 明文已清零：立刻通知所有窗口，界面不能继续显示上一次解密出来的内容。
         // 事件不含任何数据，只表示「已进入锁定态」。
         use tauri::Emitter;
         if let Some(app) = self.app_handle.get() {
             let _ = app.emit("vault://locked", serde_json::json!({ "at": chrono::Utc::now().timestamp_millis() }));
         }
+    }
+
+    /// 悬停线程专用：只判断「现在还能不能查」，**不续期**。
+    ///
+    /// 如果每 120ms 的 tick 都走 `check_session()`，鼠标停在题目上就等于一直有输入，
+    /// 空闲自动锁永远不会触发，保险库会被无限期摊开。过期时这里照常落地锁定。
+    pub fn peek_session(&self) -> Result<String> {
+        let user = self.vault.active_user().ok_or(AppError::Locked)?;
+        let timeout = self.idle_timeout_seconds();
+        let now = chrono::Utc::now().timestamp();
+        if self.vault.session_expired(timeout, now).unwrap_or(true) {
+            self.lock_down();
+            return Err(AppError::Locked);
+        }
+        Ok(user)
     }
 
     pub fn action_policy(&self) -> ActionPolicy {
@@ -154,6 +177,8 @@ impl AppCore {
 
     /// 替换正在使用的数据库文件前，必须先关闭全部连接。
     pub fn lock_connections(&self) {
+        // 换库（备份恢复/导入）后题干会整批变掉，进程内的匹配缓存必须一起清掉。
+        crate::quiz::matcher::invalidate();
         self.db.dispose_connections();
     }
 }

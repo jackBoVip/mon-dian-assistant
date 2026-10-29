@@ -4,7 +4,8 @@ version = "1.0.0"
 description = "蒙电信产助手 — 本地优先、安全优先的跨平台凭据保险库桌面应用"
 authors = ["内蒙古电力业务场景项目组"]
 edition = "2021"
-rust-version = "1.80"
+# 1.91 是 pure-onnx-ocr 0.3 的下限（它依赖 tract-onnx 0.23.9）。
+rust-version = "1.91"
 # src/bin/mda_fill_host.rs 是第二个 bin 目标；不声明 default-run 时 tauri build 无法确定主程序。
 default-run = "mon-dian-assistant"
 
@@ -50,7 +51,20 @@ ed25519-dalek = { version = "2", features = ["std"] }
 url = "2"
 socket2 = "0.6"
 rust_xlsxwriter = { version = "0.92", default-features = false }
+# calamine 同时读 .xlsx 与 .xls（BIFF），自动嗅探；下面 undoc 只开 doc 那一套。
 calamine = { version = "0.30", default-features = false }
+# Word 97-2003 二进制（.doc）：只启用 doc 解析器 + codepage 解码（中文题库多半是 GBK 压缩段），
+# 不拉 docx/xlsx/ppt 那几套解析器——本仓库的 .docx/.xlsx 有自己更严格的解析链。
+undoc = { version = "0.27", default-features = false, features = ["doc", "codepages"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"
+chardetng = "1"
+encoding_rs = "0.8"
+# 答题助手：纯 Rust 推理 ONNX 版 PP-OCRv5 det/rec（tract 后端，无 C/C++ 依赖）。
+pure-onnx-ocr = "0.3"
+image = { version = "0.25", default-features = false, features = ["png"] }
+# 光标附近截屏；只用到 Monitor 的截图能力，不启用窗口/录制功能。
+xcap = "0.9"
 
 [dev-dependencies]
 tempfile = "3"
@@ -65,3 +79,43 @@ codegen-units = 1
 lto = true
 strip = true
 panic = "abort"
+
+# 答题助手的 OCR 走 tract（纯 Rust 推理）。未优化的推理依赖在 debug 构建里慢一个数量级：
+# 同一张 1800×440 截图实测 debug 4.6s、release 0.38s；debug 下把像素砍一半仍有 4.3s，
+# 说明慢在未优化的推理代码本身，不在像素量。这里只给推理链上的依赖开优化——
+# 本 crate 仍不优化（改完照样秒编译），代价是首次 dev 构建多编译一遍这些依赖。
+[profile.dev.package.pure-onnx-ocr]
+opt-level = 3
+
+[profile.dev.package.tract-core]
+opt-level = 3
+
+[profile.dev.package."tract-data"]
+opt-level = 3
+
+[profile.dev.package."tract-extra"]
+opt-level = 3
+
+[profile.dev.package."tract-hir"]
+opt-level = 3
+
+[profile.dev.package."tract-linalg"]
+opt-level = 3
+
+[profile.dev.package."tract-nnef"]
+opt-level = 3
+
+[profile.dev.package."tract-onnx"]
+opt-level = 3
+
+[profile.dev.package."tract-onnx-opl"]
+opt-level = 3
+
+[profile.dev.package."tract-transformers"]
+opt-level = 3
+
+[profile.dev.package.ndarray]
+opt-level = 3
+
+[profile.dev.package.matrixmultiply]
+opt-level = 3

@@ -148,6 +148,10 @@ const ALLOWED: {
       why: '同上，抽屉那一档：原先 flex 行内 margin-left:auto 推右 + align-self:flex-start 贴顶，改写成等价绝对定位，保住 drawer-in 的 translateX 补间不被定位覆盖。',
     },
     {
+      match: '.overlay-dialog--wide',
+      why: '导入题库的复核表要一行放下序号/题型/置信度/问题码/题干/答案/右侧勾选框，答题助手弹窗要放下两列下拉与题库勾选清单，32rem 会把内容压成两三行、右侧控件溢出；只把 max-width 提到 48rem，定位、内边距、遮罩与入场动画全部沿用 .overlay-dialog。48rem 在最小窗 960px 下两侧仍各留一档 --spacing-4。',
+    },
+    {
       match: '.dropdown-item:hover, .dropdown-item[data-highlighted]',
       why: '高亮态多挂一个属性选择器：Radix 把键盘选择位写在 data-highlighted 上，只认 :hover 时键盘走菜单全程无视觉反馈。底色档位与 :hover 共用同一条声明，鼠标与键盘看到的是同一个状态。',
     },

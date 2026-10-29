@@ -13,7 +13,7 @@ import { useTheme } from '../state/theme';
 import type { AppStatus } from '../lib/types';
 
 /**
- * 顶栏的测试基准：一级胶囊只有「账号中心 / 系统管理」两项，齿轮下拉分两组。
+ * 顶栏的测试基准：一级胶囊是「账号中心 / 题库 / 系统管理」三项，齿轮下拉分两组。
  * 顺序与启停来自 menu_nodes，可见性来自 my_permissions——两者在 lib/menuTree 合并后
  * 以 NavTree 传进来。这里守的是顶栏如何消费这棵树，以及设置页激活时齿轮的激活态。
  */
@@ -91,16 +91,17 @@ beforeEach(() => {
   useNotify.setState({ items: [] });
 });
 
-describe('一级胶囊只有账号中心与系统管理', () => {
+describe('一级胶囊是账号中心、题库与系统管理', () => {
   it('导航树还没就绪时胶囊里一个业务项都没有（宁缺不猜）', () => {
     renderTopBar('accounts', null, null);
     expect(within(capsule()).queryAllByRole('button')).toHaveLength(0);
   });
 
-  it('全量权限下是两项，顺序为账号中心 → 系统管理', () => {
+  it('全量权限下是三项，顺序为账号中心 → 题库 → 系统管理', () => {
     renderTopBar();
     expect(within(capsule()).getAllByRole('button').map((el) => el.textContent)).toEqual([
       PAGE_META.accounts.label,
+      PAGE_META.quiz.label,
       SYSTEM_LABEL,
     ]);
   });
@@ -138,7 +139,26 @@ describe('一级胶囊只有账号中心与系统管理', () => {
       'aria-current',
       'page',
     );
+    expect(within(capsule()).getByRole('button', { name: PAGE_META.quiz.label })).not.toHaveAttribute(
+      'aria-current',
+    );
     expect(within(capsule()).getByRole('button', { name: SYSTEM_LABEL })).not.toHaveAttribute('aria-current');
+  });
+
+  it('停在题库页时只有题库那颗带 aria-current=page', () => {
+    renderTopBar('quiz');
+    expect(within(capsule()).getByRole('button', { name: PAGE_META.quiz.label })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(within(capsule()).getByRole('button', { name: PAGE_META.accounts.label })).not.toHaveAttribute('aria-current');
+    expect(within(capsule()).getByRole('button', { name: SYSTEM_LABEL })).not.toHaveAttribute('aria-current');
+  });
+
+  it('点题库直接落到题库页，不走系统管理那套「上次访问」逻辑', () => {
+    const { onNavigate } = renderTopBar('accounts', 'audit');
+    fireEvent.click(within(capsule()).getByRole('button', { name: PAGE_META.quiz.label }));
+    expect(onNavigate).toHaveBeenCalledWith('quiz');
   });
 
   it('停在系统管理任一页时，系统管理那颗带 aria-current=page', () => {

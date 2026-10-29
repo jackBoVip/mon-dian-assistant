@@ -109,6 +109,33 @@ pub enum AppError {
     ContainerStale,
     #[error("本地存储不可用，无法安全保存密钥材料")]
     KeyStoreUnavailable,
+    /// 括号里只放行列号与原因码（解析器给出），题面正文一律不进错误链。
+    #[error("题库文件解析失败")]
+    QuizParseFailed(String),
+    #[error("题库文件格式不受支持：仅接受 DOCX / TXT / XLSX / CSV")]
+    QuizUnsupportedFormat,
+    #[error("题库文件过大：单文件上限 32MiB，单次导入上限 20000 题")]
+    QuizFileTooLarge,
+    #[error("导入任务不存在或已过期")]
+    QuizJobNotFound,
+    #[error("导入任务已结束，不能再修改")]
+    QuizJobClosed,
+    /// 括号里只放行号/列号与原因码。
+    #[error("有题目不合法，未能发布")]
+    QuizRowInvalid(String),
+    #[error("题库名称不能为空，最多 64 个字")]
+    QuizLibraryNameInvalid,
+    #[error("OCR 引擎不可用：模型缺失或推理失败")]
+    QuizOcrUnavailable,
+    /// 括号里只放失败环节与系统错误类型，不含截图内容。
+    #[error("截屏失败")]
+    QuizCaptureFailed(String),
+    #[error("未获得屏幕录制权限")]
+    QuizScreenPermissionDenied,
+    #[error("当前系统环境不支持答题助手：Wayland 下无法截屏")]
+    QuizUnsupportedPlatform,
+    #[error("没有可检索的题库：请至少选择一份题库")]
+    QuizScopeEmpty,
     #[error("系统安全存储不可用：需要操作者显式同意才能改用本机文件密钥")]
     DeviceKeyConsentRequired,
     /// 保险库文件在、设备密钥取不到。此时生成新密钥会让旧库永久无法解密，只能停下来说明情况。
@@ -187,6 +214,18 @@ impl AppError {
             AppError::ContainerUnopenable => "CONTAINER_UNOPENABLE",
             AppError::ContainerStale => "CONTAINER_STALE",
             AppError::KeyStoreUnavailable => "KEYSTORE_UNAVAILABLE",
+            AppError::QuizParseFailed(_) => "QUIZ_PARSE_FAILED",
+            AppError::QuizUnsupportedFormat => "QUIZ_UNSUPPORTED_FORMAT",
+            AppError::QuizFileTooLarge => "QUIZ_FILE_TOO_LARGE",
+            AppError::QuizJobNotFound => "QUIZ_JOB_NOT_FOUND",
+            AppError::QuizJobClosed => "QUIZ_JOB_CLOSED",
+            AppError::QuizRowInvalid(_) => "QUIZ_ROW_INVALID",
+            AppError::QuizLibraryNameInvalid => "QUIZ_LIBRARY_NAME_INVALID",
+            AppError::QuizOcrUnavailable => "QUIZ_OCR_UNAVAILABLE",
+            AppError::QuizCaptureFailed(_) => "QUIZ_CAPTURE_FAILED",
+            AppError::QuizScreenPermissionDenied => "QUIZ_SCREEN_PERMISSION_DENIED",
+            AppError::QuizUnsupportedPlatform => "QUIZ_UNSUPPORTED_PLATFORM",
+            AppError::QuizScopeEmpty => "QUIZ_SCOPE_EMPTY",
             AppError::DeviceKeyConsentRequired => "DEVICE_KEY_CONSENT_REQUIRED",
             AppError::DeviceKeyLostVaultIntact => "DEVICE_KEY_LOST_VAULT_INTACT",
             AppError::Serde(_) => "SERDE",
@@ -199,7 +238,11 @@ impl AppError {
         match self {
             AppError::QuerySyntax(_) => "QUERY_SYNTAX: 查询串解析失败（正文不记录）".to_string(),
             // 口令不满足哪一条要求（主密码为空 / 容器口令的位数、类别、常见弱密码），由判定算出，不含口令本身
+            // 解析器只把位置与原因码放进括号，题面/答案正文不进错误链、不进审计
             AppError::WeakPassword(reason) => reason.clone(),
+            AppError::QuizParseFailed(where_) | AppError::QuizRowInvalid(where_) => where_.clone(),
+            // 只带失败环节与系统错误类型（例如「枚举显示器失败」），截图内容不在这条链上
+            AppError::QuizCaptureFailed(where_) => where_.clone(),
             other => other.code().to_string(),
         }
     }

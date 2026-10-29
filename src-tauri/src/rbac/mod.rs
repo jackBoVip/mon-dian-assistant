@@ -12,6 +12,8 @@ pub mod perm {
     pub const MENU_QUICK_LAUNCHER: &str = "menu.quick_launcher";
     /// 权限管理自己的入口（二级节点）。少了它，操作者无法回到本页撤销任何改动。
     pub const MENU_NODE_PERMISSIONS: &str = "menu.node.system.permissions";
+    /// 题库是一级根页，入口键与账号中心同属「一级节点键」这一档。
+    pub const MENU_TOP_QUIZ: &str = "menu.node.top.quiz";
     // 账号台账（外部系统凭据）
     pub const ACC_READ: &str = "accounts.read";
     pub const ACC_CREATE: &str = "accounts.create";
@@ -35,6 +37,11 @@ pub mod perm {
     pub const SYS_UPDATE_CONFIG: &str = "system.update.config";
     /// 开放入站端口是运维暴露面，单独授权：有「改更新源」不等于该让这台机器当分发点。
     pub const SYS_UPDATE_SERVE: &str = "system.update.serve";
+    // 题库与答题助手
+    pub const QUIZ_LIBRARY_READ: &str = "quiz.library.read";
+    pub const QUIZ_LIBRARY_IMPORT: &str = "quiz.library.import";
+    pub const QUIZ_LIBRARY_MANAGE: &str = "quiz.library.manage";
+    pub const QUIZ_ASSISTANT_USE: &str = "quiz.assistant.use";
 }
 
 /// 当前使用者的全部权限键（菜单 + 操作）。

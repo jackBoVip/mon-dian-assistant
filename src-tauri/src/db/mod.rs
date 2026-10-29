@@ -12,7 +12,12 @@ use std::sync::Arc;
 pub struct Db {
     conn: Arc<parking_lot::Mutex<Connection>>,
     pub path: String,
+    /// 进程内唯一的实例序号。不能用 Arc/连接地址代替：库关闭后地址会被下一个库复用，
+    /// 进程级缓存就会把上一个库的结果当成这个库的（测试里每个内存库各是一个实例）。
+    instance: usize,
 }
+
+static NEXT_INSTANCE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
 
 impl Db {
     /// 取连接锁。全库只有一个连接，锁不可重入：同线程重复加锁会永久挂死进程。
@@ -29,7 +34,11 @@ impl Db {
     }
 
     fn from_connection(conn: Connection, path: String) -> Result<Self> {
-        let db = Self { conn: Arc::new(parking_lot::Mutex::new(conn)), path };
+        let db = Self {
+            conn: Arc::new(parking_lot::Mutex::new(conn)),
+            path,
+            instance: NEXT_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        };
         {
             let c = db.lock_conn();
             c.execute_batch(
@@ -57,6 +66,12 @@ impl Db {
         let conn = Connection::open_in_memory()?;
         Self::key_and_verify(&conn, key)?;
         Self::from_connection(conn, ":memory:".into())
+    }
+
+    /// 进程内唯一的实例标识。进程级缓存放键时带上它，不同库实例（测试里每个内存库、
+    /// 备份恢复后换上的新文件）就不会互相串结果。
+    pub fn instance_id(&self) -> usize {
+        self.instance
     }
 
     fn key_and_verify(conn: &Connection, key: &[u8]) -> Result<()> {
@@ -156,6 +171,8 @@ mod tests {
             "vault_items", "vault_item_secrets", "vault_target_preferences", "roles",
             "permissions", "user_roles", "role_permissions", "audit_events", "app_settings",
             "import_jobs", "import_job_errors", "vault_groups", "vault_item_tags", "key_metadata",
+            "quiz_libraries", "quiz_questions", "quiz_import_jobs", "quiz_import_rows",
+            "quiz_assistant_preferences", "quiz_assistant_scope", "quiz_question_fts",
         ] {
             assert!(names.iter().any(|n| n == expected), "缺少表 {expected}");
         }

@@ -58,6 +58,21 @@ import type {
   UpdateInfo,
   VaultStats,
   WindowChrome,
+  QuizAssistantPreferences,
+  QuizAssistantPreferencesInput,
+  QuizAssistantStatus,
+  QuizBulkEdit,
+  QuizImportJob,
+  QuizImportJobDetail,
+  QuizImportRowPatch,
+  QuizImportRowUpdated,
+  QuizImportTemplate,
+  QuizLibraryRow,
+  QuizLookup,
+  QuizMatchHit,
+  QuizOcrStatus,
+  QuizQuestionPage,
+  QuizScreenPermissionStatus,
 } from './types';
 
 /** 前端到 Rust 的唯一入口。前端不拼接 SQL、不持有密钥、不自行判定权限。 */
@@ -271,6 +286,44 @@ export const api = {
   extensionHostStatus: () => call<ExtensionHostStatus>('extension_host_status'),
   extensionHostInstall: () => call<ExtensionHostInstallResult>('extension_host_install'),
   extensionHostUninstall: () => call<ExtensionHostUninstallResult>('extension_host_uninstall'),
+
+  // —— 题库与导入任务 ——
+  // 读题库只要求 quiz.library.read；重命名/删除/重建索引要 quiz.library.manage，
+  // 解析/复核/发布要 quiz.library.import——前端只按权限裁剪入口，真正的拒绝在 Rust。
+  quizLibraries: () => call<QuizLibraryRow[]>('quiz_list_libraries'),
+  quizLibraryQuestions: (libraryId: string, offset: number, limit: number) =>
+    call<QuizQuestionPage>('quiz_library_questions', { libraryId, offset, limit }),
+  quizRenameLibrary: (id: string, name: string) => call<QuizLibraryRow>('quiz_rename_library', { id, name }),
+  quizDeleteLibrary: (id: string) => call<void>('quiz_delete_library', { id }),
+  /** 重建 FTS 索引，返回重建后的题目总数。 */
+  quizReindex: () => call<number>('quiz_reindex'),
+  /** 读文件与解析在 Rust 的阻塞线程里跑；只回任务摘要，复核表按页另取。 */
+  quizImportParse: (path: string) => call<QuizImportJob>('quiz_import_parse', { path }),
+  quizImportJob: (jobId: string, offset: number, limit: number, onlyIssues: boolean) =>
+    call<QuizImportJobDetail>('quiz_import_job', { jobId, offset, limit, onlyIssues }),
+  quizImportUpdateRow: (jobId: string, rowId: string, patch: QuizImportRowPatch) =>
+    call<QuizImportRowUpdated>('quiz_import_update_row', { jobId, rowId, patch }),
+  quizImportBulkUpdate: (jobId: string, edit: QuizBulkEdit) =>
+    call<QuizImportJob>('quiz_import_bulk_update', { jobId, edit }),
+  quizImportPublish: (jobId: string, libraryName?: string | null) =>
+    call<QuizLibraryRow>('quiz_import_publish', { jobId, libraryName: libraryName ?? null }),
+  quizImportDiscard: (jobId: string) => call<void>('quiz_import_discard', { jobId }),
+  /** 导入模板：静态示例 CSV，内容由解析层 `grid::template_csv()` 给出并被同一套测试读回。 */
+  quizImportTemplate: () => call<QuizImportTemplate>('quiz_import_template'),
+  /** 手动识别：`libraryIds` 省略/null = 在全部题库里查；空数组会被后端按「范围为空」拒绝。 */
+  quizMatchText: (text: string, libraryIds?: string[] | null) =>
+    call<QuizMatchHit[]>('quiz_match_text', { text, libraryIds: libraryIds ?? null }),
+  quizLookupAtCursor: (libraryIds?: string[] | null) =>
+    call<QuizLookup>('quiz_lookup_at_cursor', { libraryIds: libraryIds ?? null }),
+  quizOcrStatus: () => call<QuizOcrStatus>('quiz_ocr_status'),
+  quizScreenPermission: () => call<QuizScreenPermissionStatus>('quiz_screen_permission'),
+  quizRequestScreenPermission: () => call<QuizScreenPermissionStatus>('quiz_request_screen_permission'),
+  /** 助手的运行状态与已保存设置。起停、改配置之后都要重问一次。 */
+  quizAssistantStatus: () => call<QuizAssistantStatus>('quiz_assistant_status'),
+  quizAssistantSetPreferences: (input: QuizAssistantPreferencesInput) =>
+    call<QuizAssistantPreferences>('quiz_assistant_set_preferences', { input }),
+  quizAssistantStart: () => call<QuizAssistantStatus>('quiz_assistant_start'),
+  quizAssistantStop: () => call<QuizAssistantStatus>('quiz_assistant_stop'),
 };
 
 export { isTauri };

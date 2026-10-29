@@ -59,6 +59,10 @@ vi.mock('../pages/LauncherSettingsPage', async () => {
   const { createElement } = await import('react');
   return { LauncherSettingsPage: () => createElement('div', null, 'LAUNCHER_PAGE') };
 });
+vi.mock('../pages/QuizPage', async () => {
+  const { createElement } = await import('react');
+  return { QuizPage: () => createElement('div', null, 'QUIZ_PAGE') };
+});
 
 const FULL = [...Object.values(PERM), ...seedMenuNodes().map((node) => node.permKey)];
 
@@ -151,6 +155,16 @@ describe('壳层：系统管理的左栏与落点', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '系统管理' }));
     expect(await screen.findByText('ADMIN_PAGE:audit')).toBeInTheDocument();
+  });
+
+  it('题库是一级页：点胶囊落到题库页，且不带系统管理侧栏', async () => {
+    renderShell();
+    await screen.findByText('ACCOUNTS_PAGE');
+
+    fireEvent.click(screen.getByRole('button', { name: PAGE_META.quiz.label }));
+    expect(await screen.findByText('QUIZ_PAGE')).toBeInTheDocument();
+    expect(screen.queryByText('ACCOUNTS_PAGE')).toBeNull();
+    expect(screen.queryByRole('navigation', { name: '系统管理导航' })).toBeNull();
   });
 
   it('设置页没有侧栏', async () => {

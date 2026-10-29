@@ -55,11 +55,11 @@ async function hello() {
   }
 }
 
-/** 当前标签页为 https 时，让内容脚本立刻重走一次检测（依赖 activeTab 授权）。 */
+/** 当前标签页为 http(s) 时，让内容脚本立刻重走一次检测（依赖 activeTab 授权）。 */
 async function triggerActiveTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url || !tab.url.startsWith('https://')) return;
+    if (!tab || !tab.url || (!tab.url.startsWith('https://') && !tab.url.startsWith('http://'))) return;
     try {
       await chrome.tabs.sendMessage(tab.id, { v: PROTOCOL, kind: 'mda-ping' });
     } catch (_) {

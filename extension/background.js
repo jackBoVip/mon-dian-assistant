@@ -90,7 +90,8 @@ async function handleRequest(msg) {
       return callHost({ type: 'hello' });
     case 'challenge': {
       const origin = String(msg.origin || '');
-      if (!origin.startsWith('https://')) {
+      // http 也放行：内网台账里确实有明文 http 站点，填充面由桌面端的精确 Origin 比对守住。
+      if (!origin.startsWith('https://') && !origin.startsWith('http://')) {
         return { ok: false, error: 'ORIGIN_NOT_ALLOWED' };
       }
       return callHost({ type: 'challenge', origin });

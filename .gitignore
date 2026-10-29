@@ -31,3 +31,8 @@ src-tauri/binaries/
 .vscode/
 *.log
 coverage/
+
+# OCR 模型由 scripts/prepare-ocr-models.mjs 下载并校验，不入库。
+# 只忽略模型目录本身：上层 resources/ocr/ 必须存在，否则 tauri_build 会因为
+# bundle.resources 的源路径不存在而让任何一次 cargo build / cargo test 直接失败。
+src-tauri/resources/ocr/ppocrv5/

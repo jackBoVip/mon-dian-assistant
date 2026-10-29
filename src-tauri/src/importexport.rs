@@ -479,8 +479,8 @@ fn validate_row(row_no: usize, r: &ImportRow) -> Vec<RowError> {
             errs.push(RowError { row_no, code: "BAD_SCHEME".into(), message: "地址前缀不是可识别的协议".into(), field: Some("地址".into()) });
         }
     }
-    if !r.allowed_origin.trim().is_empty() && !r.allowed_origin.starts_with("https://") {
-        errs.push(RowError { row_no, code: "BAD_ORIGIN".into(), message: "自动填充 Origin 必须是 https:// 开头的精确 Origin".into(), field: Some("精确Origin".into()) });
+    if !r.allowed_origin.trim().is_empty() && !r.allowed_origin.starts_with("https://") && !r.allowed_origin.starts_with("http://") {
+        errs.push(RowError { row_no, code: "BAD_ORIGIN".into(), message: "自动填充 Origin 必须是 http:// 或 https:// 开头的精确 Origin".into(), field: Some("精确Origin".into()) });
     }
     if r.account_alias.trim().is_empty() {
         errs.push(RowError { row_no, code: "EMPTY_ALIAS".into(), message: "账号别名不能为空（同一地址允许多个账号，靠别名区分）".into(), field: Some("账号别名".into()) });
@@ -1740,12 +1740,20 @@ mod tests {
         assert_eq!(rows[0].1[0].row_no, 2);
     }
 
+    /// 精确 Origin 认 http 与 https（内网台账确有明文 http 系统），其余协议前缀仍然拒。
     #[test]
-    fn rejects_non_https_origin_and_bad_port() {
-        let text = "目标名称,目标类型,地址,账号别名,精确Origin,端口\nT,web,https://a,ops1,http://a,99999\n";
+    fn rejects_non_http_origin_and_bad_port() {
+        let text = "目标名称,目标类型,地址,账号别名,精确Origin,端口\nT,web,https://a,ops1,ftp://a,99999\n";
         let (rows, _) = parse_csv(text).unwrap();
         assert!(rows[0].1.iter().any(|e| e.code == "BAD_ORIGIN"));
         assert!(rows[0].1.iter().any(|e| e.code == "BAD_PORT"));
+    }
+
+    #[test]
+    fn accepts_http_allowed_origin_for_intranet_sites() {
+        let text = "目标名称,目标类型,地址,账号别名,精确Origin\nT,web,http://10.0.0.8:8080/login,ops1,http://10.0.0.8:8080\n";
+        let (rows, _) = parse_csv(text).unwrap();
+        assert!(rows[0].1.is_empty(), "http 站点是台账里的正常一档，不该报错：{:?}", rows[0].1);
     }
 
     #[test]

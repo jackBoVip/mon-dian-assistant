@@ -38,12 +38,13 @@ describe('IPC 契约：前端包装的命令必须都注册过（F29）', () => 
 describe('CSP 三处声明必须一致（F32）', () => {
   const conf = JSON.parse(read('src-tauri/tauri.conf.json')) as { app: { security: { csp?: string } } };
   const confCsp = conf.app.security.csp ?? '';
-  const metas = ['index.html', 'launcher.html']
+  const HTML_ENTRIES = ['index.html', 'launcher.html', 'quiztip.html'];
+  const metas = HTML_ENTRIES
     .map((f) => /Content-Security-Policy" content="([^"]+)"/.exec(read(f))?.[1])
     .filter((x): x is string => Boolean(x));
 
-  it('两份 HTML meta 与 tauri.conf 的 csp 都在，且逐项对齐（frame-ancestors 只能待在 conf 里）', () => {
-    expect(metas).toHaveLength(2);
+  it('各窗口的 HTML meta 与 tauri.conf 的 csp 都在，且逐项对齐（frame-ancestors 只能待在 conf 里）', () => {
+    expect(metas).toHaveLength(HTML_ENTRIES.length);
     const strip = (s: string) =>
       s
         .split(';')
@@ -174,3 +175,43 @@ describe('Overlay 标题栏必须配一块拖拽区（AB 轮那句"能拖"是没
   });
 });
 
+
+/**
+ * 答题浮层的跨端契约（P6）。
+ *
+ * 悬停线程在 Rust 里算完命中，只发一条事件给浮层；两侧的字面量差一个字符，
+ * 命令与线程全绿、鼠标停半天也不会出答案，而且日志里没有任何异常——只有真机才看得见。
+ * 所以这里比的是两端**同一枚字面量**，不是"某一端看起来有写"。
+ */
+describe('答题浮层的事件名与窗口登记两侧同源', () => {
+  const rustMod = read('src-tauri/src/quiz/mod.rs');
+  const rustTip = read('src-tauri/src/quiz/tip.rs');
+  const app = read('src/quiztip/QuizTipApp.tsx');
+  const EVENT = 'quiz://tip';
+
+  it('事件名在 Rust 侧发行处与浮层监听处都出现', () => {
+    expect(rustMod, `Rust 侧没有定义 ${EVENT}`).toContain(EVENT);
+    expect(app, `浮层没有监听 ${EVENT}`).toContain(EVENT);
+  });
+
+  it('浮层窗口在 capabilities 里登记过，否则 listen 这一步会被权限拒掉', () => {
+    const caps = JSON.parse(read('src-tauri/capabilities/default.json')) as { windows: string[] };
+    expect(caps.windows).toContain('quiztip');
+    expect(rustTip, 'tip.rs 里的窗口 label 与 capabilities 对不上').toContain('pub const TIP_LABEL: &str = "quiztip"');
+  });
+
+  it('载荷字段两侧一一对应：Rust 用 snake_case，序列化成前端那套 camelCase', () => {
+    // Rust 侧字段名是 snake_case，穿越 IPC 之后由 serde 转成 camelCase——两层都要对得上，
+    // 少一条 rename 就会让前端拿到 `show_options` 而读不到 `showOptions`（答案里少一截选项）。
+    expect(rustTip, 'tip.rs 的载荷没有 serde camelCase').toMatch(/#\[serde\(rename_all = "camelCase"\)\]/);
+    for (const [rust, ts] of [
+      ['visible', 'visible'],
+      ['hit', 'hit'],
+      ['show_options', 'showOptions'],
+      ['at', 'at'],
+    ]) {
+      expect(rustTip, `Rust 侧载荷里没有 ${rust}`).toMatch(new RegExp(`pub ${rust}:`));
+      expect(app, `浮层 TipPayload 里没有 ${ts}`).toContain(`${ts}:`);
+    }
+  });
+});

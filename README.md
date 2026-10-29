@@ -12,6 +12,7 @@
 
 左侧菜单 **1 = 账号管理**：外部系统的账号口令台账，里面的用户名口令都不是本软件的登录凭据。
 左侧菜单 **2 = 系统管理**：本软件自身的使用者、角色、菜单与动作权限、主密码策略、会话安全、主题、更新、审计、备份。
+顶部导航另一级 **题库**：导入多份题库，并为 OCR 答题助手提供检索范围（见下文「题库与 OCR 答题助手」）。
 
 其它硬约束：
 
@@ -19,18 +20,22 @@
 - 同一地址/主机/库 **允许多条凭据**；地址永远不是凭据的唯一键，凭据靠「账号别名」区分。
 - 默认账号是 **(本地使用者 × 目标)** 的偏好：第一条自动成为默认，后续新增不覆盖，改默认绝不影响其它记录。
 - 全局快捷启动器：系统级快捷键唤起置顶搜索框，逗号（`,`/`，`）分隔的多条件按 **AND** 组合；结果可直接打开目标 / 打开网页并安全填充 / 复制账号 / 复制口令 / 查看详情 / 改选其它账号 / 设为默认，全部复用既有鉴权与安全流程。
-- 主题：7 种风格 × 明暗模式的所有颜色只写在 `src/styles/tokens.css` 这一层，组件里不出现字面色值。两个入口（`src/main.tsx`、`src/launcher.tsx`）都必须引入这一层——漏掉不会报错，只会让整套主题静默失效。`src/styles/themeContrast.test.ts` 同时守住引入关系和 WCAG 2.1 AA 的文字对比度（逐主题 × 逐模式 × 玻璃强度三档）。
+- 主题：7 种风格 × 明暗模式的所有颜色只写在 `src/styles/tokens.css` 这一层，组件里不出现字面色值。三个入口（`src/main.tsx`、`src/launcher.tsx`、`src/quiztip.tsx`）都必须引入这一层——漏掉不会报错，只会让整套主题静默失效。`src/styles/themeContrast.test.ts` 同时守住引入关系和 WCAG 2.1 AA 的文字对比度（逐主题 × 逐模式 × 玻璃强度三档）。
+- 题库与答题助手：题库并入同一个加密保险库（见下文「题库与 OCR 答题助手」），取词是**本地** OCR（PP-OCRv5，纯 Rust 推理），截图不落盘、题目与答案不进审计。
 
 ## 目录
 
 ```
 src/                 React + TS 前端（页面、组件、状态、IPC 类型镜像）
 src/launcher/        快捷启动器独立窗口
+src/quiztip/         答题助手浮层独立窗口
 src-tauri/src/       Rust 后端（命令层、鉴权、加密、数据库、快捷启动器、填充宿主）
+src-tauri/src/quiz/  题库解析/导入/全文检索/OCR/悬停取词
 src-tauri/src/bin/mda_fill_host.rs   Native Messaging 宿主（sidecar，独立进程）
+src-tauri/resources/ocr/             OCR 模型落地位置（模型不入库，见「打包」）
 src-tauri/benches/   10k 记录规模的性能实测
 extension/           浏览器扩展（MV3，仅通过一次性票据取用凭据）
-scripts/             构建辅助脚本
+scripts/             构建辅助脚本（含 OCR 模型下载/校验）
 docs/                交付状态与验收说明
 ```
 
@@ -58,25 +63,46 @@ npx vitest run
 ## 打包（三平台）
 
 打包前必须先生成 sidecar 宿主二进制（`tauri.conf.json` 的 `bundle.externalBin` 会按
-`mda_fill_host-<target-triple>[.exe]` 命名规则查找）：
+`mda_fill_host-<target-triple>[.exe]` 命名规则查找），并把 OCR 模型取到本地
+（`bundle.resources` 会把 `src-tauri/resources/ocr/` 整目录映射成包内 `ocr/`）：
 
 ```bash
+node scripts/prepare-ocr-models.mjs     # 下载并校验 PP-OCRv5 mobile det/rec（约 21MB，幂等）
+node scripts/prepare-ocr-models.mjs --check   # 离线复核（CI / 交付前用）
 scripts/prepare-host-binary.sh          # 用当前 rustc host triple 构建并复制到 src-tauri/binaries/
 npm run tauri:build                     # 即 tauri build；bundle.targets 已声明 7 种格式，
                                         # Tauri 只会构建当前操作系统能产出的那几种
 ```
 
+- 模型目录不入库（`.gitignore`），但 `src-tauri/resources/ocr/` 这一层**必须在盘上**：
+  Tauri 的 `build.rs` 在资源源路径不存在时会让任何一次 `cargo build` / `cargo test` 直接失败
+  （仓库里留了 `.gitkeep` 占位）。模型本身缺失只在运行时表现为「OCR 引擎不可用」，
+  所以发版前那一步 `--check` 是阻塞的，别跳过。
 - **macOS**：产出 `.app` 与 `.dmg`。Keychain 作为系统安全存储；
-  首次运行需在「系统设置 → 隐私与安全」允许辅助功能（全局快捷键与填充所需）。
+  首次运行需在「系统设置 → 隐私与安全」允许辅助功能（全局快捷键与填充所需）；
+  答题助手另外需要**屏幕录制**授权，不授权时助手启动会被拒并给出指引。
 - **Linux（主流发行版）**：`npm run tauri:build -- --bundles deb,rpm,appimage`。
   运行期依赖 `libsecret`（Secret Service）与 GTK/WebKit2GTK；打包机需安装
   `libsecret-1-dev`、`libwebkit2gtk-4.1-dev`、`libayatana-appindicator3-dev`。
   无 Secret Service（例如纯自绘 WM 未起 keyring）时，数据库主密钥落到 `0600` 本机文件，
   并在「系统管理 → 安全状态」显式告警——**不会把保险库数据降级为明文**。
+  **Wayland 会话不支持答题助手**（取不到全局光标与屏幕），界面会明确说明需 X11。
 - **Windows 11**：`npm run tauri:build -- --bundles nsis,msi`（`webviewInstallMode` 已设为
   `downloadBootstrapper`）。Credential Manager 作为系统安全存储。sidecar 随主程序同目录发布
   （带 target triple 后缀）。Native Messaging 清单在 Windows 上写注册表键，程序只给出键名提示
   （见 `fill_host::registry_hint()`），需要用户/管理员手动导入 `.reg`，本项目不自动改注册表。
+
+## 题库与 OCR 答题助手
+
+左侧菜单 **3 = 题库**（与账号管理、系统管理同级）：
+
+- **导入**：Word（`.docx` / `.doc`）、Excel（`.xlsx` / `.xls`）、TXT、CSV，一次一份文件——可以点选，也可以直接把文件拖进导入窗口；解析后先进「复核表」（默认只列有问题的行，取消勾选看全部行；每页 50 行，头部与分页固定、只有列表滚；题型、选项、答案、标签可逐行改，可疑行默认不发布），确认后才写进题库。可以导入任意多份题库，重名允许。没有现成文件时可在选文件那一步**下载 CSV 模板**（四行示例覆盖单选 / 多选 / 判断 / 填空，带 BOM，Excel 双击即可打开填），模板内容由后端给出、并有一条测试保证它自己能被原样导回。
+- **页头三枚图标**：重建检索索引、答题助手、导入题库——都是纯图标，悬停有说明。答题助手的内容在日常只用「开 / 关」与「范围」，所以收进弹窗（弹窗右上角那颗写着「启用 / 关闭」的开关就是入口——没给屏幕录制权限时拨它，会直接向系统申请，而不是把开关灰掉），关掉即停掉状态轮询。
+- **检索边界**：题库并入同一个加密保险库（SQLCipher），所以锁库即停用 OCR；所有读写都走 `check_session` + `rbac::require`，题目原文不进日志、不进审计。
+- **答题助手**：光标在任意题目上停留约 0.5 秒后本地识别并检索，命中就在光标旁的置顶小浮层显示答案（浮层点击穿透、内容防截屏）。默认在**全部题库**里检索，也可以勾选只查指定题库。停留时长可在弹窗里调（300–2000ms）。
+- **隐私**：截图只在内存里存在一瞬，识别完立即释放，不落盘；关闭助手或锁库时线程与浮层一起停。
+- **开发态的速度别当真**：`npm run tauri:dev` 之外没有额外开销时，一次识别在发布档约 0.25–0.35s，而 debug 档若不优化推理依赖会到 4 秒以上。`Cargo.toml` 已给整条 tract 推理链单独开了 `opt-level = 3`，改过它之后**要停掉 `tauri:dev` 重新起一次**才生效（首次重建约 1–2 分钟）。
+
 
 签名与公证（notarize）不在本仓库自动化：发布方需自备 Apple 开发者证书、Windows 代码签名证书，
 更新清单的 ed25519 公钥通过配置注入（`release_pubkey()`），**仓库内不含任何私钥或初始口令**。

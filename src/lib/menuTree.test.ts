@@ -39,9 +39,9 @@ function patch(nodes: MenuNode[], id: string, changes: Partial<MenuNode>): MenuN
 }
 
 describe('全量种子 + 全量权限：导航就是那张确认稿', () => {
-  it('顶栏两项、左栏五项、齿轮五 + 一，顺序照 sort_order', () => {
+  it('顶栏三项、左栏五项、齿轮五 + 一，顺序照 sort_order', () => {
     const nav = navOf(seedMenuNodes());
-    expect(nav.top.map((entry) => entry.key)).toEqual(['accounts', 'system']);
+    expect(nav.top.map((entry) => entry.key)).toEqual(['accounts', 'quiz', 'system']);
     expect(pageKeys(nav.admin)).toEqual(['users', 'roles', 'menus', 'permissions', 'audit']);
     expect(pageKeys(nav.settings)).toEqual(['security', 'appearance', 'backup', 'update', 'tools']);
     expect(pageKeys(nav.utilities)).toEqual(['launcher']);
@@ -69,7 +69,7 @@ describe('全量种子 + 全量权限：导航就是那张确认稿', () => {
 describe('节点停用：入口消失，权限不受影响', () => {
   it('停用 top.system 后顶栏没有系统管理，左栏清空', () => {
     const nav = navOf(patch(seedMenuNodes(), 'mn-top-system', { status: 'disabled' }));
-    expect(nav.top.map((entry) => entry.key)).toEqual(['accounts']);
+    expect(nav.top.map((entry) => entry.key)).toEqual(['accounts', 'quiz']);
     expect(nav.admin).toEqual([]);
   });
 
@@ -81,8 +81,14 @@ describe('节点停用：入口消失，权限不受影响', () => {
 
   it('停用 top.accounts 后账号中心整项不出现', () => {
     const nav = navOf(patch(seedMenuNodes(), 'mn-top-accounts', { status: 'disabled' }));
-    expect(nav.top.map((entry) => entry.key)).toEqual(['system']);
+    expect(nav.top.map((entry) => entry.key)).toEqual(['quiz', 'system']);
     expect(nav.reachable.has('accounts')).toBe(false);
+  });
+
+  it('停用 top.quiz 后题库整项不出现，可达集合也不含 quiz', () => {
+    const nav = navOf(patch(seedMenuNodes(), 'mn-top-quiz', { status: 'disabled' }));
+    expect(nav.top.map((entry) => entry.key)).toEqual(['accounts', 'system']);
+    expect(nav.reachable.has('quiz')).toBe(false);
   });
 
   it('停用 gear.settings 后四个设置页一起消失，工具组不受影响', () => {
@@ -100,6 +106,21 @@ describe('权限裁剪：菜单节点只是第一道门', () => {
     );
     expect(nav.top.map((entry) => entry.key)).toEqual(['system']);
     expect(nav.reachable.has('accounts')).toBe(false);
+  });
+
+  it('题库要菜单键与 quiz.library.read 两枚，缺一枚就不出入口', () => {
+    const withBoth = navOf(
+      seedMenuNodes(),
+      new Set([permOf('top.quiz'), PERM.QUIZ_LIBRARY_READ]),
+    );
+    expect(withBoth.top.map((entry) => entry.key)).toEqual(['quiz']);
+    expect(withBoth.reachable.has('quiz')).toBe(true);
+
+    const noMenuKey = navOf(seedMenuNodes(), new Set([PERM.QUIZ_LIBRARY_READ]));
+    expect(noMenuKey.top).toEqual([]);
+
+    const noRead = navOf(seedMenuNodes(), new Set([permOf('top.quiz')]));
+    expect(noRead.top).toEqual([]);
   });
 
   it('没有 menu.system 时系统管理连根带叶一起不出现，二级键单独有也没用', () => {
@@ -227,14 +248,31 @@ describe('自定义节点：别名入口', () => {
 });
 
 describe('兜底落点', () => {
-  it('账号中心优先，其次系统管理首项、设置首项、工具首项', () => {
+  it('账号中心优先，其次题库、系统管理首项、设置首项、工具首项', () => {
     expect(firstReachablePage(navOf(seedMenuNodes()))).toBe('accounts');
 
     const noAccounts = navOf(patch(seedMenuNodes(), 'mn-top-accounts', { status: 'disabled' }));
-    expect(firstReachablePage(noAccounts)).toBe('users');
+    expect(firstReachablePage(noAccounts)).toBe('quiz');
+
+    const noQuiz = navOf(
+      patch(
+        patch(seedMenuNodes(), 'mn-top-accounts', { status: 'disabled' }),
+        'mn-top-quiz',
+        { status: 'disabled' },
+      ),
+    );
+    expect(firstReachablePage(noQuiz)).toBe('users');
 
     const onlySettings = navOf(
-      patch(seedMenuNodes(), 'mn-top-accounts', { status: 'disabled' }),
+      patch(
+        patch(
+          patch(seedMenuNodes(), 'mn-top-accounts', { status: 'disabled' }),
+          'mn-top-quiz',
+          { status: 'disabled' },
+        ),
+        'mn-top-system',
+        { status: 'disabled' },
+      ),
       new Set([permOf('gear.settings'), permOf('settings.appearance')]),
     );
     expect(firstReachablePage(onlySettings)).toBe('appearance');
@@ -242,7 +280,11 @@ describe('兜底落点', () => {
     const onlyTools = navOf(
       patch(
         patch(
-          patch(seedMenuNodes(), 'mn-top-accounts', { status: 'disabled' }),
+          patch(
+            patch(seedMenuNodes(), 'mn-top-accounts', { status: 'disabled' }),
+            'mn-top-quiz',
+            { status: 'disabled' },
+          ),
           'mn-top-system',
           { status: 'disabled' },
         ),
@@ -336,7 +378,7 @@ describe('停用某枚菜单会不会把「菜单管理」页锁死', () => {
 /**
  * 夹具与迁移种子同源（**名单从被检对象推导**）。
  *
- * `test/menuFixtures.ts` 那份 15 枚节点是手抄的，一旦迁移加了页而它没跟上，上面这一整组
+ * `test/menuFixtures.ts` 那份 16 枚节点是手抄的，一旦迁移加了页而它没跟上，上面这一整组
  * 场景就全在演一份旧库——测试全绿，界面上却少一枚入口，而这条红线恰恰是交付方反复点过的
  * "菜单只决定入口是否出现"。这里直接扫迁移 SQL，把种子真正的 id / nodeKey / pageKey 抽出来对。
  */
@@ -345,9 +387,9 @@ describe('夹具必须等于迁移种子（扫 SQL，不靠人记）', () => {
   const read = (name: string) => readFileSync(resolve(ROOT, 'migrations', name), 'utf8');
   const ROW = /\('(mn-[^']+)', '([^']+)', (?:NULL|'[^']+'), '[^']*', (NULL|'[^']+'), '(page|group)'/g;
 
-  /** 0009 建表并种 15 枚；0011 把 page_key='data' 的那一枚连同派生权限一起摘掉；0014 加进外部工具。 */
+  /** 0009 建表并种 15 枚；0011 把 page_key='data' 的那一枚连同派生权限一起摘掉；0014 加进外部工具、0015 加进题库。 */
   function seededRows(): Array<{ id: string; nodeKey: string; pageKey: string | null; kind: string }> {
-    const rows = [...`${read('0009_menu_nodes.sql')}\n${read('0014_external_tools.sql')}`.matchAll(ROW)].map(
+    const rows = [...`${read('0009_menu_nodes.sql')}\n${read('0014_external_tools.sql')}\n${read('0015_quiz.sql')}`.matchAll(ROW)].map(
       (m) => ({
         id: m[1],
         nodeKey: m[2],
@@ -355,7 +397,7 @@ describe('夹具必须等于迁移种子（扫 SQL，不靠人记）', () => {
         kind: m[4],
       })
     );
-    expect(rows.length, '一行种子都没扫到，说明 INSERT 的写法变了，本条守卫要重写').toBeGreaterThanOrEqual(15);
+    expect(rows.length, '一行种子都没扫到，说明 INSERT 的写法变了，本条守卫要重写').toBeGreaterThanOrEqual(16);
     return rows.filter((row) => !read('0011_remove_data_page.sql').includes(`'${row.nodeKey}'`) && row.pageKey !== 'data');
   }
 

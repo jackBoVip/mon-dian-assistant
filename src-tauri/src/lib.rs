@@ -21,6 +21,7 @@ pub mod lan;
 pub mod launcher;
 pub mod menu;
 pub mod quick_launcher;
+pub mod quiz;
 pub mod rbac;
 pub mod secfile;
 pub mod settings;
@@ -403,6 +404,9 @@ pub fn run() {
                     let registered = shortcut.to_string();
                     if crate::quick_launcher::shortcut::equivalent(&registered, &core.shortcut.lock()) {
                         crate::launcher::toggle(app, &core);
+                    } else if quiz::assistant::matches_hotkey(&registered) {
+                        // 助手快捷键只在「已注册」时命中：没启用的账号按了也不该有任何反应。
+                        quiz::assistant::toggle(app, &core);
                     }
                 })
                 .build(),
@@ -562,12 +566,37 @@ pub fn run() {
             commands::lan::lan_set_serve,
             commands::lan::lan_check,
             commands::lan::lan_download,
+            commands::quiz::quiz_list_libraries,
+            commands::quiz::quiz_library_questions,
+            commands::quiz::quiz_rename_library,
+            commands::quiz::quiz_delete_library,
+            commands::quiz::quiz_reindex,
+            commands::quiz::quiz_import_parse,
+            commands::quiz::quiz_import_template,
+            commands::quiz::quiz_import_job,
+            commands::quiz::quiz_import_update_row,
+            commands::quiz::quiz_import_bulk_update,
+            commands::quiz::quiz_import_publish,
+            commands::quiz::quiz_import_discard,
+            commands::quiz::quiz_match_text,
+            commands::quiz::quiz_lookup_at_cursor,
+            commands::quiz::quiz_ocr_status,
+            commands::quiz::quiz_screen_permission,
+            commands::quiz::quiz_request_screen_permission,
+            commands::quiz::quiz_assistant_status,
+            commands::quiz::quiz_assistant_set_preferences,
+            commands::quiz::quiz_assistant_start,
+            commands::quiz::quiz_assistant_stop,
         ])
         .build(tauri::generate_context!())
         .expect("启动失败：无法构建应用")
         .run(move |app, event| match event {
             RunEvent::Exit => {
                 lan::stop();
+                // 悬停线程要在进程收尾前停掉，否则它会拿着已关闭的数据库连接再查一次。
+                quiz::assistant::stop_for_lock();
+                // 推理线程持有 ONNX 模型（~200MB RSS），退出前放掉，别让进程收尾时拖着它。
+                quiz::ocr::shutdown();
                 if let Some(core) = app.try_state::<SharedCore>() {
                     core.lock_connections();
                     ipc::remove_channel_file(&core.data_dir);

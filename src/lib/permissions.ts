@@ -21,6 +21,11 @@ export const PERM = {
   SYS_UPDATE_CONFIG: 'system.update.config',
   SYS_UPDATE_INSTALL: 'system.update.install',
   SYS_UPDATE_SERVE: 'system.update.serve',
+  MENU_TOP_QUIZ: 'menu.node.top.quiz',
+  QUIZ_LIBRARY_READ: 'quiz.library.read',
+  QUIZ_LIBRARY_IMPORT: 'quiz.library.import',
+  QUIZ_LIBRARY_MANAGE: 'quiz.library.manage',
+  QUIZ_ASSISTANT_USE: 'quiz.assistant.use',
 } as const;
 
 export type PermKey = (typeof PERM)[keyof typeof PERM];

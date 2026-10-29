@@ -1,0 +1,120 @@
+/* ============================================================================
+ * 答题浮层（quiztip 窗口）的样式。
+ *
+ * 为什么单独一份而不住进 global.css：global.css 有字节等同守卫（与基线快照逐字节比对），
+ * 为浮层加规则会让那条守卫整片变红。这里只消费 tokens.css 的变量与 global.css 的工具类，
+ * 不出现任何字面色值（themeContrast.test.ts 会扫全仓库）。
+ *
+ * 窗口形态见 quiz::tip：透明、无边框、置顶、点击穿透。所以这里只需要把「可见的那一枚卡片」
+ * 画出来——窗口矩形本身必须保持透明，否则四周会露出一圈矩形底色。
+ * ========================================================================== */
+
+#quiztip-root {
+  height: 100%;
+}
+
+.quiztip-body {
+  background: transparent;
+  overflow: hidden;
+}
+
+.quiztip-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-md);
+  background: var(--t-surface-elevated);
+  box-shadow: var(--shadow-dropdown);
+  overflow: hidden;
+}
+
+.quiztip-tag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--t-border);
+  color: var(--t-text-body);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.quiztip-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--t-text-muted);
+  font-size: 11px;
+}
+
+.quiztip-score {
+  margin-left: auto;
+  color: var(--t-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 题干最多三行：浮层高度固定，内容多出来的部分截掉比撑破窗口好。 */
+.quiztip-stem {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  color: var(--t-text);
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.quiztip-answer {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--t-primary);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.quiztip-answer-label {
+  flex-shrink: 0;
+  color: var(--t-text-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* 选项一行一个，但最多露两行；再多的部分由匹配层按题型截断。 */
+.quiztip-options {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+  color: var(--t-text-body);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.quiztip-options li {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.quiztip-options li > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quiztip-option-key {
+  flex-shrink: 0;
+  color: var(--t-text-muted);
+  font-variant-numeric: tabular-nums;
+}

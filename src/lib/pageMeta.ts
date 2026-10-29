@@ -2,8 +2,9 @@ import type { IconName } from '../components/ui/icons';
 import { PERM } from './permissions';
 
 /**
- * 主窗口十二个落点。
+ * 主窗口十三个落点。
  * - accounts：外部系统账号台账；
+ * - quiz：题库与答题助手（一级入口，与账号中心同级）；
  * - users/roles/menus/permissions/audit：顶部「系统管理」下的五个二级页，左侧竖排导航；
  * - security/appearance/backup/update/tools：齿轮「设置」下拉第一组的五个独立页；
  * - launcher：齿轮下拉第二组的工具页。
@@ -12,6 +13,7 @@ import { PERM } from './permissions';
  */
 export type PageKey =
   | 'accounts'
+  | 'quiz'
   | 'users'
   | 'roles'
   | 'menus'
@@ -26,7 +28,7 @@ export type PageKey =
 
 export type AdminPageKey = Extract<PageKey, 'users' | 'roles' | 'menus' | 'permissions' | 'audit'>;
 export type SettingsPageKey = Extract<PageKey, 'security' | 'appearance' | 'backup' | 'update' | 'tools'>;
-export type TopKey = 'accounts' | 'system';
+export type TopKey = 'accounts' | 'quiz' | 'system';
 export type GearPageKey = SettingsPageKey | Extract<PageKey, 'launcher'>;
 
 export interface PageMeta {
@@ -45,6 +47,10 @@ export const PAGE_META: Record<PageKey, PageMeta> = {
   accounts: {
     label: '账号中心',
     desc: '管理外部系统的账号与密码台账——这里的用户名/密码不是本软件的登录凭据。',
+  },
+  quiz: {
+    label: '题库',
+    desc: '导入多份题库并管理题目；答题助手在光标处识别题干后跨题库检索答案，可限定只查其中几份。',
   },
   users: {
     label: '用户管理',
@@ -93,12 +99,14 @@ export const PAGE_META: Record<PageKey, PageMeta> = {
 };
 
 /**
- * 十二个落点各自的权限门槛。
+ * 十三个落点各自的权限门槛。
  * 左上角入口（accounts）与「系统管理」二级页还额外受菜单节点与父级菜单键约束，
  * 这部分在 menuTree.ts 里叠加，不写进这张表。
  */
 export const PAGE_REQUIRES: Record<PageKey, string[]> = {
   accounts: [PERM.MENU_ACCOUNTS],
+  // 一级入口键由 list_menu_nodes 下发，这里只钉页面本身的能力门槛。
+  quiz: [PERM.QUIZ_LIBRARY_READ],
   users: [PERM.SYS_USER_READ],
   roles: [PERM.SYS_ROLE_MANAGE],
   menus: [PERM.SYS_ROLE_MANAGE],
@@ -116,6 +124,7 @@ export const PAGE_REQUIRES: Record<PageKey, string[]> = {
 
 export const PAGE_ICONS: Record<PageKey, IconName> = {
   accounts: 'database',
+  quiz: 'fileSheet',
   users: 'users',
   roles: 'shield',
   menus: 'listTree',

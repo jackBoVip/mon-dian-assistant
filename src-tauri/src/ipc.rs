@@ -156,8 +156,10 @@ fn handle(mut stream: TcpStream, core: std::sync::Arc<AppCore>, token: &str) -> 
 }
 
 /// Origin 允许清单：只能是台账中明确绑定过的精确 Origin。
+/// http 与 https 都放行（内网台账确有明文 http 系统）；放开的只是协议前缀这一道格式判定，
+/// 逐字比对与票据一次性这两条没有松动。
 fn origin_allowed(core: &AppCore, origin: &str) -> bool {
-    if !origin.starts_with("https://") {
+    if !origin.starts_with("https://") && !origin.starts_with("http://") {
         return false;
     }
     let Ok(targets) = crate::db::repo::list_targets(&core.db) else {

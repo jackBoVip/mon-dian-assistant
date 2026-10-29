@@ -1,6 +1,6 @@
 'use strict';
 /**
- * 蒙电信产助手 —— 内容脚本（仅注入 https 页面）
+ * 蒙电信产助手 —— 内容脚本（注入 http / https 页面）
  *
  * 流程：向 service worker 索取本次填充挑战（桌面应用只有在用户点击
  * 「打开并安全填充」且页面 Origin 与台账精确匹配时才签发一次性票据）。
@@ -252,7 +252,7 @@
 
   async function startCheck() {
     if (grant) return; // 已有进行中的流程
-    if (location.protocol !== 'https:') return;
+    if (location.protocol !== 'https:' && location.protocol !== 'http:') return;
     const resp = await send({ kind: 'challenge', origin: location.origin });
     if (!resp || resp.ok !== true || !resp.grant) return; // NO_PENDING_GRANT 等：完全静默
     grant = resp.grant;

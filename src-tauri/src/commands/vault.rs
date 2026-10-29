@@ -28,7 +28,10 @@ fn unlock_window(core: &AppCore) -> (i64, i64) {
 }
 
 /// 解锁后建立内存态：会话 + VaultKey + 授权范围内的明文搜索索引。
-pub(crate) fn establish_session(core: &AppCore, user_id: &str, vk: crate::crypto::vault_key::VaultKey) -> Result<()> {
+///
+/// 收的是 `Arc<AppCore>` 而不是 `&AppCore`：解锁后要恢复答题助手的悬停线程，
+/// 那条线程得持有自己的一份核心状态，不能借一个随调用结束就作废的引用。
+pub(crate) fn establish_session(core: &Arc<AppCore>, user_id: &str, vk: crate::crypto::vault_key::VaultKey) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let token = core.sessions.issue(user_id);
     let session = Session {
@@ -40,6 +43,10 @@ pub(crate) fn establish_session(core: &AppCore, user_id: &str, vk: crate::crypto
     };
     let docs = repo::build_search_index(&core.db, &vk, user_id)?;
     core.vault.unlock(session, Arc::new(vk), SearchIndex::new(docs));
+    // 必须在 unlock 之后：悬停线程第一轮就查会话，锁着启动会立刻自行退出。
+    if let Some(app) = core.app_handle() {
+        crate::quiz::assistant::resume_for_login(&app, core, user_id);
+    }
     Ok(())
 }
 

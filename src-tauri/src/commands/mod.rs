@@ -16,6 +16,7 @@ pub mod external_tools;
 pub mod lan;
 pub mod launcher;
 pub mod menus;
+pub mod quiz;
 pub mod rbac;
 pub mod system;
 pub mod vault;

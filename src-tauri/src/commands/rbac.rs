@@ -622,6 +622,6 @@ mod tests {
             .unwrap();
         let menus = rows.iter().filter(|r| r.kind == "menu").count();
         assert_eq!(menus as i64, nodes, "每个菜单节点都应有一枚菜单权限");
-        assert_eq!(rows.len(), 35, "种子权限目录：15 菜单 + 20 操作");
+        assert_eq!(rows.len(), 40, "种子权限目录：16 菜单 + 24 操作");
     }
 }

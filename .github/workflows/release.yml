@@ -46,6 +46,24 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: 缓存 OCR 模型
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/ocr/ppocrv5
+          key: ocr-models-${{ runner.os }}-${{ hashFiles('scripts/prepare-ocr-models.mjs') }}
+
+      - name: OCR 模型（答题助手，缺了就别打包）
+        # bundle.resources 把 resources/ocr/ 映射成包内 ocr/。模型不入库（21MB），
+        # 所以每个 runner 都要先按脚本里钉死的 commit + SHA-256 取一次；
+        # 缓存键跟着脚本走，脚本里换了版本号自然失效。
+        # 这里必须**阻塞**：模型缺了，装机包里的答题助手就是不可用状态，
+        # 而 cargo test 并不认识 OCR，整轮依旧会绿——只能靠这一步拦住。
+        # 缓存可能是旧的/残缺的，所以取完还要再跑一次离线校验。
+        shell: bash
+        run: |
+          node scripts/prepare-ocr-models.mjs
+          node scripts/prepare-ocr-models.mjs --check
+
       - name: Windows 构建前置（perl 与 nasm）
         if: runner.os == 'Windows'
         shell: pwsh
@@ -246,6 +264,35 @@ jobs:
           # 的显示名（蒙电信产助手.desktop / Name=蒙电信产助手）保持不变。
           bash scripts/fix-deb-package-name.sh src-tauri/target/release/bundle/deb
           dpkg-deb -f src-tauri/target/release/bundle/deb/*.deb Package
+
+      - name: OCR 模型确实进了安装包（看产物，不看步骤退出码）
+        # 判据钉在**交付物**上：这一步之前所有打包命令都只是"退出码为 0"，
+        # 而资源没被 bundler 收进去时退出码同样为 0，装上机才知道助手不可用。
+        # Windows 的 NSIS .exe 与 Linux 的 AppImage 是压缩容器，本 job 不解包；
+        # 它们靠上一步 `--check`（同一份 build 输入）与这里 macOS/deb 的同源证明兜住。
+        if: runner.os == 'macOS' || runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          check() {
+            # $1 = 展示名，$2 = 列出文件的命令（每行一个路径）
+            for want in ocr/ppocrv5/det/inference.onnx ocr/ppocrv5/rec/inference.onnx; do
+              if ! eval "$2" | grep -qF "$want"; then
+                echo "::error::$1 里没有 $want —— 答题助手会以「模型缺失」状态出厂"
+                return 1
+              fi
+            done
+            echo "  ✓ $1 内含 det/rec 两个模型"
+          }
+          if [ "${RUNNER_OS}" = "macOS" ]; then
+            app="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+            test -n "$app" || { echo "::error::没有 .app 可查"; exit 1; }
+            check "$app" "find '$app/Contents/Resources' -type f -print"
+          else
+            deb="$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
+            test -n "$deb" || { echo "::error::没有 .deb 可查"; exit 1; }
+            check "$deb" "dpkg-deb -c '$deb' | awk '{print \$6}'"
+          fi
 
       - name: 生成 SHA-256 摘要清单
         shell: bash

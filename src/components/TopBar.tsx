@@ -42,12 +42,19 @@ export function TopBar({ active, lastAdminPage, nav, onNavigate }: TopBarProps) 
   }
 
   function pickTop(key: TopKey) {
-    if (key === 'accounts') {
-      onNavigate('accounts');
+    if (key === 'accounts' || key === 'quiz') {
+      onNavigate(key);
       return;
     }
     const landing = nav ? resolveAdminLanding(nav, lastAdminPage) : null;
     if (landing) onNavigate(landing);
+  }
+
+  /** 胶囊的激活态：账号中心与题库各自认自己，系统管理认它名下任意二级页。 */
+  function isTopActive(key: TopKey): boolean {
+    if (key === 'accounts') return active === 'accounts';
+    if (key === 'quiz') return active === 'quiz';
+    return isAdminPage(active);
   }
 
   return (
@@ -67,15 +74,7 @@ export function TopBar({ active, lastAdminPage, nav, onNavigate }: TopBarProps) 
               key={entry.id}
               type="button"
               className="nav-item"
-              aria-current={
-                entry.key === 'accounts'
-                  ? active === 'accounts'
-                    ? 'page'
-                    : undefined
-                  : isAdminPage(active)
-                    ? 'page'
-                    : undefined
-              }
+              aria-current={isTopActive(entry.key) ? 'page' : undefined}
               onClick={() => pickTop(entry.key)}
             >
               {entry.label}

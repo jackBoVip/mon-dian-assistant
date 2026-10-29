@@ -40,6 +40,16 @@ export const queryKeys = {
   launcherPrefs: ['launcherPrefs'] as const,
   channelStatus: ['channelStatus'] as const,
   systemInfo: ['systemInfo'] as const,
+  /** 题库台账整族：发布/重命名/删除后作废。带分页的详情走 quizLibrary(id, …)。 */
+  quizLibraries: ['quizLibraries'] as const,
+  quizLibrary: (id: string, offset: number, limit: number) => ['quizLibrary', id, offset, limit] as const,
+  /** 导入任务整族：复核行编辑、批量操作、发布后都要重取摘要与当前页。 */
+  quizImportJob: (id: string, offset: number, limit: number, onlyIssues: boolean) =>
+    ['quizImportJob', id, offset, limit, onlyIssues] as const,
+  quizAssistantPrefs: ['quizAssistantPrefs'] as const,
+  quizAssistantStatus: ['quizAssistantStatus'] as const,
+  /** 屏幕录制权限：只在用户点「申请权限」后重取。 */
+  quizScreenPermission: ['quizScreenPermission'] as const,
 };
 
 /**
@@ -70,6 +80,15 @@ export function invalidateRbac(qc: QueryClient): void {
   ]) {
     void qc.invalidateQueries({ queryKey });
   }
+}
+
+/** 题库族：发布、改名、删除、重建索引后统一作废。
+ *  助手卡片的「指定题库」多选也吃这份列表，所以连着助手状态一起发。 */
+export function invalidateQuizLibraries(qc: QueryClient): void {
+  void qc.invalidateQueries({ queryKey: queryKeys.quizLibraries });
+  void qc.invalidateQueries({ queryKey: ['quizLibrary'] });
+  void qc.invalidateQueries({ queryKey: queryKeys.quizAssistantPrefs });
+  void qc.invalidateQueries({ queryKey: queryKeys.quizAssistantStatus });
 }
 
 /** 会话类错误（锁定/过期/需重认证/后端不可用）会切换全局会话面板。 */

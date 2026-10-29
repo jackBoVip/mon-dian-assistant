@@ -24,6 +24,7 @@ export default defineConfig({
       input: {
         main: path.resolve(import.meta.dirname, 'index.html'),
         launcher: path.resolve(import.meta.dirname, 'launcher.html'),
+        quiztip: path.resolve(import.meta.dirname, 'quiztip.html'),
       },
     },
   },

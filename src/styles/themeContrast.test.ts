@@ -575,11 +575,11 @@ describe('配色来源唯一（需求 line 246「不得在每个组件中硬编�
     expect([...dangling]).toEqual([]);
   });
 
-  it('两个入口都真的引入了令牌层，否则整套主题静默失效', () => {
+  it('三个入口都真的引入了令牌层，否则整套主题静默失效', () => {
     // 这条守卫是早前补的：tokens.css 曾经谁都没 import，构建产物里一个 --t-* 声明都没有，
     // 而按 label 查 DOM 的 jsdom 测试照样全绿——因为 jsdom 根本不做层叠与取色。
     // 引入关系漏了不会报错，只会让界面退回浏览器默认颜色，所以必须显式守住。
-    for (const entry of ['src/main.tsx', 'src/launcher.tsx']) {
+    for (const entry of ['src/main.tsx', 'src/launcher.tsx', 'src/quiztip.tsx']) {
       const text = readFileSync(resolve(process.cwd(), entry), 'utf8');
       expect(text, `${entry} 没有引入 tokens.css`).toMatch(/import\s+['"][^'"]*styles\/tokens\.css['"]/);
       expect(text, `${entry} 没有引入 global.css`).toMatch(/import\s+['"][^'"]*styles\/global\.css['"]/);

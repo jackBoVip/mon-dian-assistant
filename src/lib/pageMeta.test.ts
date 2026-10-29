@@ -19,6 +19,7 @@ import { PERM } from './permissions';
  */
 const PAGES: PageKey[] = [
   'accounts',
+  'quiz',
   'users',
   'roles',
   'menus',
@@ -32,7 +33,7 @@ const PAGES: PageKey[] = [
   'launcher',
 ];
 
-describe('十二个落点与页面文案', () => {
+describe('十三个落点与页面文案', () => {
   it('PAGE_META 的键顺序就是信息架构的顺序（系统管理五页 + 五个设置页 + 一个工具页）', () => {
     expect(Object.keys(PAGE_META)).toEqual(PAGES);
   });
@@ -64,11 +65,13 @@ describe('十二个落点与页面文案', () => {
   });
 });
 
-describe('权限门槛与图标：十二页一页不缺', () => {
+describe('权限门槛与图标：十三页一页不缺', () => {
   it('PAGE_REQUIRES 覆盖全部落点，空数组只代表「无需额外权限」', () => {
     expect(Object.keys(PAGE_REQUIRES)).toEqual(PAGES);
     expect(PAGE_REQUIRES.appearance).toEqual([]);
     expect(PAGE_REQUIRES.accounts).toEqual([PERM.MENU_ACCOUNTS]);
+    // 题库是一级入口：入口键由菜单节点下发，页面本身只要求读题库
+    expect(PAGE_REQUIRES.quiz).toEqual([PERM.QUIZ_LIBRARY_READ]);
     expect(PAGE_REQUIRES.launcher).toEqual([PERM.MENU_QUICK_LAUNCHER, PERM.SYS_SECURITY_CONFIG]);
     // 外部工具页的四条写命令都要 system.security.config，入口不给这枚权限就是满屏 FORBIDDEN
     expect(PAGE_REQUIRES.tools).toEqual([PERM.SYS_SECURITY_CONFIG]);
@@ -87,9 +90,9 @@ describe('权限门槛与图标：十二页一页不缺', () => {
     }
   });
 
-  it('三张表合起来正好覆盖除账号中心外的十一页，且没有重复', () => {
+  it('三张表合起来正好覆盖除账号中心与题库外的十一页，且没有重复', () => {
     const keys = [...ADMIN_ITEMS, ...SETTINGS_ITEMS, ...UTILITY_ITEMS].map((item) => item.key);
-    expect(keys).toEqual(PAGES.filter((page) => page !== 'accounts'));
+    expect(keys).toEqual(PAGES.filter((page) => page !== 'accounts' && page !== 'quiz'));
     expect(new Set(keys).size).toBe(keys.length);
   });
 
@@ -121,5 +124,9 @@ describe('页面归属判定', () => {
     }
     expect(isAdminPage('accounts')).toBe(false);
     expect(isGearPage('accounts')).toBe(false);
+    // 题库与账号中心同级：既不进系统管理左栏，也不进齿轮两组
+    expect(isAdminPage('quiz')).toBe(false);
+    expect(isSettingsPage('quiz')).toBe(false);
+    expect(isGearPage('quiz')).toBe(false);
   });
 });

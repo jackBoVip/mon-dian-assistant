@@ -863,3 +863,193 @@ export interface ExtensionHostInstallResult {
 export interface ExtensionHostUninstallResult {
   removed: string[]
 }
+
+// —— 题库与答题助手（quiz）——
+// 唯一事实来源：src-tauri/src/quiz/models.rs 的 Serialize 结构（serde camelCase）。
+// 答案一律以后端裁定后的 `answerDisplay` 回显；前端不再解析/拼接答案文本。
+
+/** 题型，与 `quiz_questions.qtype` 的 CHECK 约束逐字一致。 */
+export type QuizQType = 'single' | 'multiple' | 'true_false' | 'fill_blank'
+
+export interface QuizOption {
+  key: string
+  text: string
+}
+
+/** 题库列表行（quiz_list_libraries / quiz_rename_library / quiz_import_publish）。 */
+export interface QuizLibraryRow {
+  id: string
+  name: string
+  sourceFormat: string
+  sourceFilename: string
+  questionCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** 题库详情里的一题（quiz_library_questions）。 */
+export interface QuizQuestionRow {
+  id: string
+  libraryId: string
+  seq: number
+  qtype: string
+  stem: string
+  options: QuizOption[]
+  answerDisplay: string
+  tags: string[]
+  confidence: number
+  issues: string[]
+  sourceRef: string | null
+}
+
+/** 后端分页容器（quiz::models::Page<T>）。 */
+export interface QuizPaged<T> {
+  items: T[]
+  total: number
+}
+
+/** 题库详情的一页。单独起名是为了让 api.ts 的 `call<T>('…')` 保持单层尖括号——
+ *  契约测试的正则是 `<[^>]*>`，嵌套泛型会让那条 call 扫不到、进而少一条守卫。 */
+export type QuizQuestionPage = QuizPaged<QuizQuestionRow>
+
+/** 导入任务摘要（status: review | published | discarded | failed）。 */
+export interface QuizImportJob {
+  id: string
+  libraryName: string
+  sourceFormat: string
+  sourceFilename: string
+  status: string
+  totalRows: number
+  includedRows: number
+  issueRows: number
+  errorCode: string | null
+  createdAt: string
+  updatedAt: string
+  publishedLibraryId: string | null
+}
+
+/** 复核表里的一行。`issues` 是问题码，中文由 lib/quiz.ts 翻译。 */
+export interface QuizImportRow {
+  id: string
+  seq: number
+  qtype: string
+  stem: string
+  options: QuizOption[]
+  answerDisplay: string
+  tags: string[]
+  confidence: number
+  issues: string[]
+  sourceRef: string | null
+  include: boolean
+  edited: boolean
+}
+
+/** quiz_import_template 返回：静态示例 CSV 与它的列名（与解析层 `TEMPLATE_COLUMNS` 逐字一致）。 */
+export interface QuizImportTemplate {
+  csv: string
+  columns: string[]
+  note: string
+}
+
+/**
+ * quiz_import_job 的返回体：摘要 + **当前页**的行。
+ *
+ * `total` 是当前筛选（只看有问题 / 全部行）下的行数，不是任务总行数——那在 `job.totalRows`。
+ */
+export interface QuizImportJobDetail {
+  job: QuizImportJob
+  rows: QuizImportRow[]
+  total: number
+}
+
+/** quiz_import_update_row 返回：改后的那一行 + 摘要（计数已刷新）。 */
+export interface QuizImportRowUpdated {
+  row: QuizImportRow
+  job: QuizImportJob
+}
+
+/** 逐行编辑补丁：只发改动过的键，答案按用户看到的文本交回、由后端重新裁定。 */
+export interface QuizImportRowPatch {
+  qtype?: string
+  stem?: string
+  options?: QuizOption[]
+  answerText?: string
+  tags?: string[]
+  include?: boolean
+}
+
+export type QuizBulkOp = 'set_qtype' | 'set_include' | 'exclude_low_confidence' | 'exclude_duplicates' | 'remove'
+
+/** 批量操作（quiz_import_bulk_update 的 edit 参数）。ids 缺省 = 作用于整个任务。 */
+export interface QuizBulkEdit {
+  op: QuizBulkOp
+  qtype?: string | null
+  include?: boolean | null
+  threshold?: number | null
+  ids?: string[] | null
+}
+
+/**
+ * 一次匹配的命中。`score` 是 0–1 的相似度，显示门槛在后端（`matcher::DISPLAY_MIN`），
+ * 界面只负责展示；低于门槛的结果后端根本不会返回。
+ */
+export interface QuizMatchHit {
+  questionId: string
+  libraryId: string
+  libraryName: string
+  seq: number
+  qtype: string
+  stem: string
+  options: QuizOption[]
+  answerDisplay: string
+  tags: string[]
+  score: number
+}
+
+/**
+ * OCR 引擎状态。`detail` 只说明原因（模型缺失/加载失败），截图内容永不进入这里。
+ * `idle` 表示还没用过引擎；第一次识别时才加载模型。
+ */
+export interface QuizOcrStatus {
+  state: 'idle' | 'loading' | 'ready' | 'failed' | 'unavailable'
+  detail: string | null
+  modelDir: string | null
+}
+
+/** 屏幕录制权限。非 macOS 平台恒为 granted；Wayland 下 supported=false。 */
+export interface QuizScreenPermissionStatus {
+  supported: boolean
+  permission: 'granted' | 'denied' | 'unknown'
+  detail: string | null
+}
+
+/** 「在光标处试一次」的结果：OCR 原文 + 命中列表 + 两段耗时。 */
+export interface QuizLookup {
+  text: string
+  hits: QuizMatchHit[]
+  ocrMs: number
+  matchMs: number
+}
+
+/** 悬停助手设置（quiz::store::AssistantPreferences）。`enabled` 只由起停命令改。 */
+export interface QuizAssistantPreferences {
+  enabled: boolean
+  /** all = 全部题库；selected = 只查 `libraryIds` 里的题库。 */
+  scopeMode: 'all' | 'selected'
+  dwellMs: number
+  hotkey: string
+  showOptions: boolean
+  libraryIds: string[]
+}
+
+/** `quiz_assistant_set_preferences` 的入参：整份覆盖，字段名与后端 deny_unknown_fields 对齐。 */
+export type QuizAssistantPreferencesInput = Omit<QuizAssistantPreferences, 'enabled'>
+
+/** 助手状态：运行中与否 + 已保存的偏好 + 引擎 + 屏幕权限 + 最近一次自动停用的原因。 */
+export interface QuizAssistantStatus {
+  running: boolean
+  preferences: QuizAssistantPreferences
+  ocr: QuizOcrStatus
+  screen: QuizScreenPermissionStatus
+  detail: string | null
+}

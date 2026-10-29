@@ -306,10 +306,10 @@ mod tests {
     }
 
     #[test]
-    fn seed_has_four_roots_and_eleven_leaves() {
+    fn seed_has_five_roots_and_eleven_leaves() {
         let nodes = list(&db()).unwrap();
-        assert_eq!(nodes.len(), 15);
-        assert_eq!(nodes.iter().filter(|n| n.parent_id.is_none()).count(), 4);
+        assert_eq!(nodes.len(), 16);
+        assert_eq!(nodes.iter().filter(|n| n.parent_id.is_none()).count(), 5);
         assert_eq!(nodes.iter().filter(|n| n.parent_id.is_some()).count(), 11);
         for (page, parent) in BINDINGS {
             let node = nodes
@@ -330,6 +330,7 @@ mod tests {
         assert_eq!(by_key(&nodes, "top.accounts").perm_key, "menu.accounts");
         assert_eq!(by_key(&nodes, "top.system").perm_key, "menu.system");
         assert_eq!(by_key(&nodes, "tools.launcher").perm_key, "menu.quick_launcher");
+        assert_eq!(by_key(&nodes, "top.quiz").perm_key, "menu.node.top.quiz");
         assert_eq!(by_key(&nodes, "gear.settings").perm_key, "menu.node.gear.settings");
         assert_eq!(
             by_key(&nodes, "system.permissions").perm_key,
@@ -382,6 +383,8 @@ mod tests {
         let long = "名".repeat(LABEL_MAX_CHARS + 1);
         assert!(matches!(create(&d, &long, "users"), Err(AppError::MenuLabelInvalid)));
         assert!(matches!(create(&d, "别名", "accounts"), Err(AppError::MenuPageUnknown)));
+        // 题库是一级根页，与账号中心一样不参与「新增入口」的绑定
+        assert!(matches!(create(&d, "别名", "quiz"), Err(AppError::MenuPageUnknown)));
         assert!(matches!(create(&d, "别名", "nope"), Err(AppError::MenuPageUnknown)));
     }
 
@@ -492,7 +495,7 @@ mod tests {
         let d = db();
         let builtin = by_key(&list(&d).unwrap(), "system.users").id.clone();
         assert!(matches!(delete(&d, &builtin), Err(AppError::MenuProtected(_))));
-        assert_eq!(list(&d).unwrap().len(), 15);
+        assert_eq!(list(&d).unwrap().len(), 16);
 
         let custom = create(&d, "别名", "users").unwrap();
         let perm_key = format!("menu.node.{custom}");
@@ -506,7 +509,7 @@ mod tests {
         };
         assert_eq!(count_perms(&d.lock_conn()), 1);
         delete(&d, &custom).unwrap();
-        assert_eq!(list(&d).unwrap().len(), 15);
+        assert_eq!(list(&d).unwrap().len(), 16);
         let conn = d.lock_conn();
         assert_eq!(count_perms(&conn), 0, "删入口必须同时删掉它的菜单权限");
         let grants: i64 = conn

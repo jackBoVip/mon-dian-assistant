@@ -4,6 +4,7 @@ import { AccountsPage } from '../pages/AccountsPage';
 import { AdminPage } from '../pages/AdminPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { LauncherSettingsPage } from '../pages/LauncherSettingsPage';
+import { QuizPage } from '../pages/QuizPage';
 import { AdminSidebar } from './admin/AdminSidebar';
 import { NotifyHost } from './ui/sonner';
 import { Loading, ErrorState, EmptyState } from './ui/StateBlocks';
@@ -71,6 +72,7 @@ export function AppShell() {
     }
     if (isSettingsPage(effectivePage)) return <SettingsPage section={effectivePage} />;
     if (effectivePage === 'accounts') return <AccountsPage />;
+    if (effectivePage === 'quiz') return <QuizPage />;
     return <LauncherSettingsPage />;
   }
 

@@ -1,7 +1,7 @@
 import type { MenuNode } from '../lib/types';
 
 /**
- * 与 `migrations/0009_menu_nodes.sql`（经 0011 移除导入/导出页、0014 加进外部工具后）的种子逐行对齐的 15 枚节点。
+ * 与 `migrations/0009_menu_nodes.sql`（经 0011 移除导入/导出页、0014 加进外部工具、0015 加进题库后）的种子逐行对齐的 16 枚节点。
  * 测试夹具只改 status / label / sortOrder 来表达场景，节点身份保持稳定。
  * permKey 与 `menu::perm_key_for` 同源：三枚旧键沿用，其余为 menu.node.<nodeKey>。
  */
@@ -17,6 +17,18 @@ export const SEED_MENU_NODES: MenuNode[] = [
     status: 'active',
     sortOrder: 10,
     permKey: 'menu.accounts',
+  },
+  {
+    id: 'mn-top-quiz',
+    nodeKey: 'top.quiz',
+    parentId: null,
+    label: '题库',
+    pageKey: 'quiz',
+    kind: 'page',
+    builtin: true,
+    status: 'active',
+    sortOrder: 15,
+    permKey: 'menu.node.top.quiz',
   },
   {
     id: 'mn-top-system',

@@ -42,6 +42,7 @@ export interface NavTree {
 }
 
 const ROOT_ACCOUNTS = 'top.accounts';
+const ROOT_QUIZ = 'top.quiz';
 const ROOT_SYSTEM = 'top.system';
 const ROOT_SETTINGS = 'gear.settings';
 const ROOT_TOOLS = 'gear.tools';
@@ -95,6 +96,13 @@ export function buildNav(
     has(perms, accountsRoot.permKey) &&
     allows(perms, PAGE_REQUIRES.accounts);
 
+  const quizRoot = rootOf(ROOT_QUIZ);
+  const quizVisible =
+    quizRoot !== null &&
+    quizRoot.pageKey === 'quiz' &&
+    has(perms, quizRoot.permKey) &&
+    allows(perms, PAGE_REQUIRES.quiz);
+
   const systemRoot = rootOf(ROOT_SYSTEM);
   const systemVisible = systemRoot !== null && has(perms, systemRoot.permKey);
   // 二级入口各有自己的菜单键；父级不可见时整棵子树都不出现。
@@ -115,10 +123,19 @@ export function buildNav(
       : [];
 
   const top: TopNavEntry[] = [];
-  const roots = sortNodes(nodes.filter((node) => !node.parentId && (node.nodeKey === ROOT_ACCOUNTS || node.nodeKey === ROOT_SYSTEM)));
+  const roots = sortNodes(
+    nodes.filter(
+      (node) =>
+        !node.parentId &&
+        (node.nodeKey === ROOT_ACCOUNTS || node.nodeKey === ROOT_QUIZ || node.nodeKey === ROOT_SYSTEM),
+    ),
+  );
   for (const root of roots) {
     if (root.nodeKey === ROOT_ACCOUNTS && accountsVisible) {
       top.push({ id: root.id, key: 'accounts', label: root.label });
+    }
+    if (root.nodeKey === ROOT_QUIZ && quizVisible) {
+      top.push({ id: root.id, key: 'quiz', label: root.label });
     }
     if (root.nodeKey === ROOT_SYSTEM && systemVisible && admin.length > 0) {
       top.push({ id: root.id, key: 'system', label: root.label });
@@ -127,6 +144,7 @@ export function buildNav(
 
   const reachable = new Set<PageKey>();
   if (accountsVisible) reachable.add('accounts');
+  if (quizVisible) reachable.add('quiz');
   for (const entry of [...admin, ...settings, ...utilities]) reachable.add(entry.page);
 
   return { top, admin, settings, utilities, reachable };
@@ -155,9 +173,10 @@ export function disableWouldLockOutMenusPage(nodes: MenuNode[], id: string): boo
   return !nodes.some(pathAlive);
 }
 
-/** 当前页不可达时的兜底：账号中心 → 系统管理首项 → 设置页首项 → 工具页首项。 */
+/** 当前页不可达时的兜底：账号中心 → 题库 → 系统管理首项 → 设置页首项 → 工具页首项。 */
 export function firstReachablePage(nav: NavTree): PageKey | null {
   if (nav.reachable.has('accounts')) return 'accounts';
+  if (nav.reachable.has('quiz')) return 'quiz';
   return nav.admin[0]?.page ?? nav.settings[0]?.page ?? nav.utilities[0]?.page ?? null;
 }
 

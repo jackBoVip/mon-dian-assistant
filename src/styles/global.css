@@ -2524,6 +2524,13 @@ h3 {
   margin: auto;
   max-width: 32rem;
 }
+/* 宽弹窗（导入题库的复核表、答题助手）：32rem 装得下两三行字，装不下复核行那「序号 + 题型 +
+ * 置信度 + 问题码 + 题干 + 答案 + 右侧两枚勾选框」一整套，也装不下助手的「两列下拉 + 题库勾选」；
+ * 48rem 能在最小窗（960px）里留出两边各一档 --spacing-4 的让位，又不至于让单行文字拉得过长。
+ * 只改上限宽度，定位与几何其余部分沿用上面那条。 */
+.overlay-dialog--wide {
+  max-width: 48rem;
+}
 /* 抽屉那一档：原先是 flex 行里靠 margin-left:auto 推到右、align-self:flex-start 贴顶。
  * 同样换成无 transform 的绝对定位，逐值对应：
  *   上 = --spacing-3 + --titlebar-inset、右 = --spacing-3、下 = --spacing-3；
