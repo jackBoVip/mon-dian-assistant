@@ -1,7 +1,7 @@
 {
   "name": "mon-dian-assistant",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "蒙电信产助手 — 本地优先、安全优先的跨平台凭据保险库桌面应用",
   "scripts": {

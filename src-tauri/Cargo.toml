@@ -1,6 +1,6 @@
 [package]
 name = "mon-dian-assistant"
-version = "1.0.0"
+version = "1.0.1"
 description = "蒙电信产助手 — 本地优先、安全优先的跨平台凭据保险库桌面应用"
 authors = ["内蒙古电力业务场景项目组"]
 edition = "2021"
