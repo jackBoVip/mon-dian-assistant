@@ -20,7 +20,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest, ubuntu-22.04]
+        # Linux 用 24.04 而不是 Tauri 官方推荐的 22.04：答题助手的截屏库 xcap 在
+        # Linux 上无条件链 pipewire，`libspa 0.10` 直接调用 `spa_video_info_raw.flags`
+        # 等 22.04（libpipewire 0.3.48）没有的 API，编译期就红——升开发包没用，
+        # 那是另一套头文件与运行时。代价是 deb 的 glibc 底线上到 2.39
+        # （Ubuntu 24.04+ / Debian 13+），22.04 及更老的发行版装不上。
+        # 发布说明里必须写明这条，别让使用者下完才发现。
+        os: [macos-14, windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -401,6 +407,7 @@ jobs:
           - macOS：\`macOS-<arch>.dmg\`（未签名，ad-hoc；其它 Mac 上 Gatekeeper 会拦）
           - Windows：\`Windows-x64-setup.exe\`（NSIS；msi 未产出，WiX ICE30）
           - Linux：\`Linux-amd64.deb\` + \`Linux-amd64.AppImage\`（rpm 未产出，Tauri 侧 externalBin 重复登记）
+            - \`Linux-amd64.deb\` 在 Ubuntu 24.04 runner 上构建，**要求 glibc ≥ 2.39**：Ubuntu 24.04+ 与 Debian 13+ 可直接装，22.04 及更老的发行版装不上（答题助手的截屏库在 Linux 上必须链 pipewire，而 22.04 的头文件太旧）。AppImage 自带大部分运行库，但同样受 glibc 下限约束。
           - \`SHA256SUMS.txt\` 按上面这些资源名计算，下载后先 \`sha256sum -c\` 再装
 
           交付前必读：三端**均未签名、均未在目标机做过安装与首启验证**；WebView2 走
