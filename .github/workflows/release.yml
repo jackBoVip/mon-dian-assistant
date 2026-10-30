@@ -93,7 +93,11 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf rpm
+            librsvg2-dev patchelf rpm \
+            libpipewire-0.3-dev
+          # libpipewire-0.3-dev：答题助手的截屏走 xcap，它在 Linux 上**无条件**链
+          # pipewire（Wayland 取屏用），libspa-sys 的 build.rs 要 libpipewire-0.3.pc。
+          # 少了它 cargo build 直接 panic（v1.0.1 首跑实测 exit 101）。
 
       - name: 构建本 triple 的 Native Messaging 侧车（必须先于前端门禁）
         # src/lib/ipcContract.test.ts 的 F33 守卫要求 binaries/ 里已有带 target triple
