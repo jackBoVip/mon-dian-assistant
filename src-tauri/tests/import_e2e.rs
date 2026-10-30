@@ -121,7 +121,9 @@ fn preview_and_commit_cover_errors_conflicts_and_roundtrip() {
     r[0] = "坏Origin".into();
     r[1] = "web".into();
     r[2] = "https://e4.example.internal".into();
-    r[3] = "http://e4.example.internal".into();
+    // 2026-10-29 起 http:// 是合法 Origin（自动填充放开一档），所以这里用一个
+    // 仍然非法的写法来覆盖 BAD_ORIGIN：不带协议前缀。
+    r[3] = "e4.example.internal".into();
     r[8] = "ops".into();
     rows.push(row(r));
     let mut r = blank_row();
