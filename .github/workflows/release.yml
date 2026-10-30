@@ -100,10 +100,12 @@ jobs:
             libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf rpm \
-            libpipewire-0.3-dev
-          # libpipewire-0.3-dev：答题助手的截屏走 xcap，它在 Linux 上**无条件**链
-          # pipewire（Wayland 取屏用），libspa-sys 的 build.rs 要 libpipewire-0.3.pc。
-          # 少了它 cargo build 直接 panic（v1.0.1 首跑实测 exit 101）。
+            libpipewire-0.3-dev libgbm-dev libdrm-dev
+          # libpipewire-0.3-dev / libgbm-dev / libdrm-dev：答题助手的截屏走 xcap，
+          # 它在 Linux 上**无条件**链 pipewire（Wayland 取屏）和 gbm/drm，
+          # 少了头文件编译期红（libspa-sys 要 libpipewire-0.3.pc）、
+          # 少了 .so 链接期红（rust-lld: unable to find library -lgbm）。
+          # 也正因为这套依赖，Linux 产包基线从 22.04 升到 24.04（见矩阵注释）。
 
       - name: 构建本 triple 的 Native Messaging 侧车（必须先于前端门禁）
         # src/lib/ipcContract.test.ts 的 F33 守卫要求 binaries/ 里已有带 target triple
