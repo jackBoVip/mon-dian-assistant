@@ -15,17 +15,22 @@ pub mod db;
 pub mod error;
 pub mod external_tools;
 pub mod fill_host;
+pub mod html_pages;
 pub mod importexport;
 pub mod ipc;
 pub mod lan;
 pub mod launcher;
 pub mod menu;
+pub mod notes;
+pub mod preview;
 pub mod quick_launcher;
 pub mod quiz;
 pub mod rbac;
 pub mod secfile;
 pub mod settings;
 pub mod state;
+pub mod tasks;
+pub mod tray;
 pub mod update;
 pub mod window_chrome;
 
@@ -304,6 +309,10 @@ pub fn finish_boot(app: &tauri::AppHandle, data_dir: PathBuf, db_key: SecretByte
     }
     // 局域网更新通道：发现线程常驻；托管服务仅在开关打开时监听
     lan::start(&core);
+    // 页面库预览：回环供页服务常驻；起不来只降级（预览入口会报 PREVIEW_UNAVAILABLE，其余功能不受影响）
+    if let Err(e) = preview::start(core.clone()) {
+        log::warn!("页面预览服务未启动：{}", e.code());
+    }
     // 启动器窗口预先创建（隐藏），保证快捷键第一下就能唤起
     let _ = launcher::ensure_window(app);
     if let Some(accel) = launcher::bootstrap(app, &core) {
@@ -381,11 +390,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // 二次启动只把已有窗口拉到前台，不重复打开数据库
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
+            tray::show_main(app);
         }))
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -411,6 +416,12 @@ pub fn run() {
                 })
                 .build(),
         )
+        // 关闭主窗口 = 隐藏驻留（见 tray 模块）；launcher / quiztip 的关闭不被拦。
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                tray::handle_close(window, api);
+            }
+        })
         .setup(move |app| {
             // 这里**绝不**向 Tauri 返回 Err。装配失败时窗口其实已经建好了（Tauri 在调用本钩子之前就按配置建窗），
             // 而返回 Err 会变成 `App::run_return` 里的一句 panic；本项目 release 是 `panic = "abort"`，
@@ -420,6 +431,8 @@ pub fn run() {
             // 是 macOS 专属，另两端不处理就会顶着系统标题栏与自绘顶栏叠成两条）。
             // 它不依赖装配结果，所以放在最前面，且失败只记日志。
             window_chrome::apply(app.handle());
+            // 托盘不依赖数据目录，且启动失败页也要能"关闭即驻留"，所以排在装配之前。
+            let _ = tray::install(app.handle());
             let handle = app.handle().clone();
             let data_dir = match resolve_data_dir(&handle) {
                 Ok(d) => d,
@@ -433,12 +446,14 @@ pub fn run() {
             // 系统安全存储不可用时绝不静默写本机密钥文件：先只探测，装配留到操作者显式同意之后
             // （界面走 commands::devicekey）。其余失败一律挂成可见的启动失败页，不再带走进程。
             match bootstrap_for_startup(&data_dir) {
-                Ok(db_key) => {
-                    if let Err(e) = finish_boot(&handle, data_dir.clone(), db_key) {
+                Ok(db_key) => match finish_boot(&handle, data_dir.clone(), db_key) {
+                    // 装配成功才读"托盘说明已看过"：没有核心句柄时读不到库，下次启动再弹一次是可接受边缘。
+                    Ok(_) => tray::hydrate(&handle),
+                    Err(e) => {
                         log::error!("启动阶段装配保险库失败（{}）：{}", e.code(), e);
                         app.manage(BootFailure::new(BootFailure::STAGE_ASSEMBLY, &e, Some(&data_dir)));
                     }
-                }
+                },
                 Err(AppError::DeviceKeyConsentRequired) => {
                     // 走到这里说明本机还没有密钥文件。区分两种问法：全新安装只是"要不要按本包
                     // 默认把主密钥放成 0600 文件"；有库无密钥则是"要不要把系统安全存储里那把旧的搬过来"。
@@ -520,6 +535,7 @@ pub fn run() {
             commands::accounts::copy_username,
             commands::accounts::copy_password,
             commands::launcher::quick_search,
+            commands::launcher::quick_reveal,
             commands::launcher::quick_action,
             commands::launcher::open_target,
             commands::launcher::open_and_fill,
@@ -587,10 +603,53 @@ pub fn run() {
             commands::quiz::quiz_assistant_set_preferences,
             commands::quiz::quiz_assistant_start,
             commands::quiz::quiz_assistant_stop,
+            commands::notes::notes_list,
+            commands::notes::notes_get,
+            commands::notes::notes_create,
+            commands::notes::notes_update,
+            commands::notes::notes_delete,
+            commands::notes::note_upload_asset_from_path,
+            commands::notes::note_upload_asset_bytes,
+            commands::notes::notes_read_text_file,
+            commands::notes::notes_export_markdown,
+            commands::notes::notes_export_zip,
+            commands::notes::notes_import_zip,
+            commands::html_pages::html_page_list,
+            commands::html_pages::html_page_get,
+            commands::html_pages::html_page_create,
+            commands::html_pages::html_page_update,
+            commands::html_pages::html_page_delete,
+            commands::html_pages::html_page_preview_url,
+            commands::html_pages::html_page_preview_open,
+            commands::html_pages::html_page_embed_open,
+            commands::html_pages::html_page_embed_sync,
+            commands::html_pages::html_page_embed_visible,
+            commands::html_pages::html_page_embed_close,
+            commands::tasks::task_definitions,
+            commands::tasks::task_profile_get,
+            commands::tasks::task_profile_update,
+            commands::tasks::task_binding_get,
+            commands::tasks::task_binding_update,
+            commands::tasks::task_binding_delete,
+            commands::tasks::task_session_status,
+            commands::tasks::task_session_login,
+            commands::tasks::task_probe_login,
+            commands::tasks::task_release_parse,
+            commands::tasks::task_run_create,
+            commands::tasks::task_run_prepare,
+            commands::tasks::task_run_publish,
+            commands::tasks::task_run_cancel,
+            commands::tasks::task_run_retry,
+            commands::tasks::task_run_get,
+            commands::tasks::task_run_list,
+            commands::tasks::task_run_logs,
         ])
         .build(tauri::generate_context!())
         .expect("启动失败：无法构建应用")
         .run(move |app, event| match event {
+            // macOS：窗口藏起来之后点 Dock 图标，要把主窗口找回来。
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => tray::show_main(app),
             RunEvent::Exit => {
                 lan::stop();
                 // 悬停线程要在进程收尾前停掉，否则它会拿着已关闭的数据库连接再查一次。

@@ -22,6 +22,23 @@ export const PERM = {
   SYS_UPDATE_INSTALL: 'system.update.install',
   SYS_UPDATE_SERVE: 'system.update.serve',
   MENU_TOP_QUIZ: 'menu.node.top.quiz',
+  MENU_TOP_TASKS: 'menu.node.top.tasks',
+  MENU_TASK_RELEASE: 'menu.node.task.release',
+  MENU_TOP_NOTES: 'menu.node.top.notes',
+  /** 笔记是个人内容：读写两枚都回填内置三档角色，不做管理员门槛。 */
+  NOTES_READ: 'notes.read',
+  NOTES_WRITE: 'notes.write',
+  /** 一级「工具」（页面库）。与齿轮里的 menu.quick_launcher 不是一回事。 */
+  MENU_TOP_TOOLS: 'menu.node.top.tools',
+  /** 页面库：读给三档，写（新建/修改/删除）只给两档管理员。 */
+  HTML_PAGE_READ: 'html.page.read',
+  HTML_PAGE_CREATE: 'html.page.create',
+  HTML_PAGE_UPDATE: 'html.page.update',
+  HTML_PAGE_DELETE: 'html.page.delete',
+  TASK_RELEASE_VIEW: 'task.release.view',
+  TASK_RELEASE_CONFIGURE: 'task.release.configure',
+  TASK_RELEASE_RUN: 'task.release.run',
+  TASK_RELEASE_RUN_PROD: 'task.release.run_prod',
   QUIZ_LIBRARY_READ: 'quiz.library.read',
   QUIZ_LIBRARY_IMPORT: 'quiz.library.import',
   QUIZ_LIBRARY_MANAGE: 'quiz.library.manage',

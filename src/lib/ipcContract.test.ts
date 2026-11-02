@@ -111,10 +111,35 @@ describe('浮层 → 主窗的导航事件两侧同源', () => {
     expect(shell, `主窗侧没有听 ${EVENT}`).toContain(EVENT);
   });
 
-  it('载荷键名两侧同一套 camelCase：targetId / itemId / keyword', () => {
-    for (const key of ['targetId', 'itemId', 'keyword']) {
-      expect(rust, `Rust 侧的载荷里没有 ${key}`).toContain(key);
+  it('载荷键名两侧同一套 camelCase：落点名 + 各页自己的坐标', () => {
+    for (const key of [
+      'page',
+      'targetId',
+      'itemId',
+      'keyword',
+      'noteId',
+      'pageId',
+      'libraryId',
+      'questionId',
+      'seq',
+      'taskKey',
+      'env',
+    ]) {
+      expect(rust, `Rust 侧的载荷里没有 "${key}"`).toContain(`"${key}"`);
       expect(nav, `前端 LauncherNavPayload 里没有 ${key}`).toContain(key);
+    }
+  });
+
+  /**
+   * `page` 的五个取值是这次扩展最容易坏的一处：Rust 写 `"page": "tools"` 而前端认 `'html'`
+   * 这种漂法，命令照样返回全绿、审计照样落一条，主窗只是把载荷咽下去不动——
+   * 报出来长成"点了没反应"，跟权限、跟取数都没关系。
+   * 所以这里把五个落点名逐个比两侧同源，而不是只比事件名。
+   */
+  it('page 的五个落点名两侧一一对应', () => {
+    for (const p of ['accounts', 'notes', 'quiz', 'html', 'tasks']) {
+      expect(rust, `Rust 侧没有发过 "page": "${p}"`).toContain(`"page": "${p}"`);
+      expect(nav, `前端 LauncherNavPayload 里没有 page: '${p}'`).toContain(`'${p}'`);
     }
   });
 
@@ -213,5 +238,57 @@ describe('答题浮层的事件名与窗口登记两侧同源', () => {
       expect(rustTip, `Rust 侧载荷里没有 ${rust}`).toMatch(new RegExp(`pub ${rust}:`));
       expect(app, `浮层 TipPayload 里没有 ${ts}`).toContain(`${ts}:`);
     }
+  });
+});
+
+/**
+ * 页面预览独立窗口的全部安全性就靠这两条反向断言：
+ * 窗口不在 capability 名单里 → 命令调用被 ACL 拒；不开 dangerousRemoteDomainIpcAccess
+ * → 远程内容拿不到任何 IPC 通道。后来人"顺手"把 label 加进 windows 名单，
+ * 或者为了调试打开那个开关，其他守卫一条都不会红，只有这里挡得住。
+ */
+describe('页面预览窗口拿不到 IPC（独立窗口能跑脚本的前提）', () => {
+  const rustPreview = read('src-tauri/src/preview/mod.rs');
+  const conf = read('src-tauri/tauri.conf.json');
+
+  it('窗口 label 与 Rust 侧同源，但不在 capabilities 的 windows 名单里', () => {
+    expect(rustPreview, 'preview/mod.rs 的窗口 label 变了，本条守卫要跟着改').toContain(
+      'pub const WINDOW_LABEL: &str = "page-preview"',
+    );
+    const caps = JSON.parse(read('src-tauri/capabilities/default.json')) as { windows: string[] };
+    expect(caps.windows).not.toContain('page-preview');
+  });
+
+  it('不开 dangerousRemoteDomainIpcAccess', () => {
+    expect(conf).not.toContain('dangerousRemoteDomainIpcAccess');
+  });
+});
+
+/**
+ * 右栏嵌入块跑的是同一份用户 HTML。它的隔离依据不是窗口 label，而是**来源**：
+ * 内容由 127.0.0.1 回环服务供出，对 Tauri 来说不是 local origin，所以
+ * `Webview::on_message` 在没有显式 `remote` capability 时直接拒绝所有自定义命令。
+ * 以下三条任何一条被改掉，页面内容就重新摸得到本应用命令：
+ * 打开方式必须是 External（app 源会被当成 local）、capability 不许出现 remote 段、
+ * label 也不许被顺手加进 windows 名单。
+ */
+describe('右栏嵌入块同样拿不到 IPC（右栏能直接操作的前提）', () => {
+  const rustEmbed = read('src-tauri/src/preview/embed.rs');
+
+  it('嵌入块是子 webview，只打开 External 地址（回环服务），绝不落到 app 源', () => {
+    expect(rustEmbed, 'embed.rs 的 label 变了，本条守卫要跟着改').toContain(
+      'pub const LABEL: &str = "page-pane"',
+    );
+    expect(rustEmbed).toContain('.add_child(');
+    expect(rustEmbed).toContain('WebviewUrl::External(parsed)');
+    expect(rustEmbed).not.toContain('WebviewUrl::App');
+  });
+
+  it('capability 里没有 remote 段，嵌入块的 label 也不在 windows 名单里', () => {
+    const raw = read('src-tauri/capabilities/default.json');
+    expect(raw, 'capability 一旦写 remote，回环页面就能拿到命令').not.toContain('"remote"');
+    const caps = JSON.parse(raw) as { windows: string[]; remote?: unknown };
+    expect(caps.remote).toBeUndefined();
+    expect(caps.windows).not.toContain('page-pane');
   });
 });

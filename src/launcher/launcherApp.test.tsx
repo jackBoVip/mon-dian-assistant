@@ -4,12 +4,13 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi } from 'vitest';
 import { LauncherApp } from './LauncherApp';
-import type { ActionReply, LauncherPreferences, QuickAction, QuickResult, SearchReply } from '../lib/types';
+import type { AccountHit, ActionReply, LauncherPreferences, NoteHit, QuickAction, QuickHit, SearchReply, ToolHit } from '../lib/types';
 
 const mocks = vi.hoisted(() => ({
   launcherPreferences: vi.fn(),
   quickSearch: vi.fn(),
   quickAction: vi.fn(),
+  quickReveal: vi.fn(),
   launcherVisibility: vi.fn(),
   theme: vi.fn(),
   setTheme: vi.fn(),
@@ -29,7 +30,8 @@ vi.mock('../lib/api', async (importOriginal) => {
   return { ...mod, api: { ...mod.api, ...mocks } };
 });
 
-const row: QuickResult = {
+const row: AccountHit = {
+  source: 'account',
   targetId: 't-1',
   itemId: 'i-1',
   systemName: 'OA办公系统',
@@ -45,18 +47,14 @@ const row: QuickResult = {
   matchKind: 'contains',
 };
 
-function reply(results: QuickResult[], locked = false): SearchReply {
-  return { locked, results, elapsedMs: 1200, indexed: 42 };
-}
-
 /** 后端 allowed_actions() 在扩展就绪、允许复制密码时给出的真实顺序（open_and_fill 被插到最前）。 */
-const keyRow: QuickResult = {
+const keyRow: AccountHit = {
   ...row,
   actions: ['open_and_fill', 'view_detail', 'copy_username', 'open_target', 'copy_password'],
 };
 
 /** 同一目标下的第二条凭据（非默认、非网页动作集：数据库目标不会有 open_and_fill）。 */
-const keyRowOther: QuickResult = {
+const keyRowOther: AccountHit = {
   ...keyRow,
   itemId: 'i-2',
   accountAlias: '运维账号',
@@ -65,6 +63,35 @@ const keyRowOther: QuickResult = {
   favorite: false,
   actions: ['view_detail', 'copy_username', 'open_target', 'copy_password', 'set_default'],
 };
+
+const noteRow: NoteHit = {
+  source: 'note',
+  noteId: 'n-1',
+  title: '变压器检修记录',
+  snippet: '…油位异常需按规程上报',
+  updatedAt: '2026-11-01T02:00:00+00:00',
+  matchKind: 'contains',
+};
+
+const toolRow: ToolHit = {
+  source: 'tool',
+  pageId: 'p-1',
+  title: '负荷率换算',
+  updatedAt: '2026-10-30T02:00:00+00:00',
+  matchKind: 'exact',
+};
+
+/** 三类非账号命中：quiz 与 task 只在需要它们时用，形状与后端 QuickHit 各变体一致。 */
+const mixedRows: QuickHit[] = [
+  noteRow,
+  toolRow,
+  { source: 'quiz', questionId: 'q-1', libraryId: 'l-1', libraryName: '安规题库', seq: 42, qtype: 'single', stem: '下列设备属于一次设备的是', matchKind: 'contains' },
+  { source: 'task', taskKey: 'release', label: '微服务发布', env: 'prod', matchKind: 'exact' },
+];
+
+function reply(results: QuickHit[], locked = false, vaultOnly = false): SearchReply {
+  return { locked, results, vaultOnly, elapsedMs: 1200, indexed: 42 };
+}
 
 function ok(action: QuickAction): ActionReply {
   return { action, ok: true, message: `已执行 ${action}` };
@@ -145,7 +172,7 @@ describe('浮层空输入推荐（需求 §285：由设置启用，锁定时不�
     renderApp();
     await waitFor(() => expect(mocks.quickSearch).toHaveBeenCalledWith(''));
 
-    fireEvent.change(screen.getByRole('textbox', { name: '快速查找账号' }), { target: { value: 'OA' } });
+    fireEvent.change(screen.getByRole('textbox', { name: /全局搜索/ }), { target: { value: 'OA' } });
     await waitFor(() => expect(mocks.quickSearch).toHaveBeenCalledWith('OA'));
     expect(await screen.findByText(/命中 1 条 · 耗时/)).toBeInTheDocument();
     expect(screen.queryByText(/收藏推荐/)).toBeNull();
@@ -155,7 +182,7 @@ describe('浮层空输入推荐（需求 §285：由设置启用，锁定时不�
     mocks.quickSearch.mockResolvedValueOnce(reply([row])).mockResolvedValue(reply([], true));
     renderApp();
     await waitFor(() => expect(mocks.quickSearch).toHaveBeenCalledTimes(1));
-    fireEvent.change(screen.getByRole('textbox', { name: '快速查找账号' }), { target: { value: 'OA' } });
+    fireEvent.change(screen.getByRole('textbox', { name: /全局搜索/ }), { target: { value: 'OA' } });
 
     expect(await screen.findByText('保险库已锁定')).toBeInTheDocument();
     expect(screen.getByText('结果已全部清除，请在主窗口解锁后重新查询')).toBeInTheDocument();
@@ -218,8 +245,8 @@ describe('浮层空输入推荐（需求 §285：由设置启用，锁定时不�
   it('空输入且没有推荐时，内容区给的是两行式引导语 + 后端下发的语法表', async () => {
     mocks.launcherPreferences.mockResolvedValue(preferences(false));
     renderApp();
-    expect(await screen.findByText('输入关键字检索保险库')).toBeInTheDocument();
-    expect(screen.getByText('可直接键入关键词，也可按字段限定检索')).toBeInTheDocument();
+    expect(await screen.findByText('输入关键字检索账号、笔记、题库、工具与任务')).toBeInTheDocument();
+    expect(screen.getByText('直接键入一个关键词五类一起搜；按字段限定检索只覆盖保险库')).toBeInTheDocument();
     expect(screen.queryAllByRole('option')).toHaveLength(0);
   });
 
@@ -240,7 +267,7 @@ describe('浮层空输入推荐（需求 §285：由设置启用，锁定时不�
     renderApp();
     expect(await screen.findByText('检索语法说明暂时读取失败，重新唤起浮层会再试一次。')).toBeInTheDocument();
     expect(screen.queryByText('字段')).toBeNull();
-    expect(screen.getByText('输入关键字检索保险库')).toBeInTheDocument();
+    expect(screen.getByText('输入关键字检索账号、笔记、题库、工具与任务')).toBeInTheDocument();
   });
 
   it('组件卸载后取消订阅：来自旧实例的事件不再触发请求', async () => {
@@ -256,14 +283,15 @@ describe('浮层空输入推荐（需求 §285：由设置启用，锁定时不�
 });
 
 /** 把浮层带进"有结果、第 0 行高亮"的状态，返回输入框以便发键盘事件。 */
-async function renderWithResults(rows: QuickResult[]) {
+async function renderWithResults(rows: QuickHit[]) {
   mocks.quickSearch.mockResolvedValue(reply(rows));
   renderApp();
-  const input = screen.getByRole('textbox', { name: '快速查找账号' });
+  const input = screen.getByRole('textbox', { name: /全局搜索/ });
   fireEvent.change(input, { target: { value: 'OA' } });
   await waitFor(() => expect(mocks.quickSearch).toHaveBeenCalledWith('OA'));
-  // 别名和用户名、地址在同一个文本节点里拼接，只能用正则做包含匹配
-  await screen.findByText(new RegExp(rows[0].accountAlias));
+  // 就绪判据用"行数对上了"，不用某一行里的文字：账号命中的系统名在两条凭据间是重复的
+  // （同一个目标下的两条凭据同名），而别名/题号/标题这五类各不一样，没法写一个通吃的探针。
+  await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(rows.length));
   return input;
 }
 
@@ -321,7 +349,7 @@ describe('浮层键盘操作（需求 line 261：↑↓ 选结果、Tab 切换�
   it('Enter 的主操作永不落在复制密码上，即使后端把 copy_password 放在第一位', async () => {
     mocks.quickSearch.mockResolvedValue(reply([{ ...keyRow, actions: ['copy_password', 'copy_username'] }]));
     renderApp();
-    const input = screen.getByRole('textbox', { name: '快速查找账号' });
+    const input = screen.getByRole('textbox', { name: /全局搜索/ });
     fireEvent.change(input, { target: { value: 'OA' } });
     await waitFor(() => expect(mocks.quickSearch).toHaveBeenCalledWith('OA'));
     await screen.findByText(/执行「复制用户名」/);
@@ -367,7 +395,7 @@ describe('浮层键盘操作（需求 line 261：↑↓ 选结果、Tab 切换�
     // 后端把非收藏的 i-1 排在收藏之前的顺序返回时，前端必须原样呈现
     mocks.quickSearch.mockResolvedValue(reply([{ ...second, favorite: false }, { ...keyRow, favorite: true }]));
     renderApp();
-    const input = screen.getByRole('textbox', { name: '快速查找账号' });
+    const input = screen.getByRole('textbox', { name: /全局搜索/ });
     fireEvent.change(input, { target: { value: 'OA' } });
     await waitFor(() => expect(mocks.quickSearch).toHaveBeenCalledWith('OA'));
     await screen.findAllByRole('option');
@@ -381,7 +409,7 @@ describe('浮层键盘操作（需求 line 261：↑↓ 选结果、Tab 切换�
   it('没有可切换对象时不接管 Tab，输入框内的编辑快捷键照常工作', async () => {
     // 无结果：Tab 保持原生行为（可以走出去），Enter 也不吞事件
     renderApp();
-    const input = screen.getByRole('textbox', { name: '快速查找账号' });
+    const input = screen.getByRole('textbox', { name: /全局搜索/ });
     fireEvent.change(input, { target: { value: 'OA' } });
     await waitFor(() => expect(mocks.quickSearch).toHaveBeenCalledWith('OA'));
     expect(fireEvent.keyDown(input, { key: 'Tab' })).toBe(true);
@@ -491,5 +519,111 @@ describe('浮层窗口尺寸撑得住照抄下来的原型档位', () => {
   it('浮层那扇窗是透明窗且关掉系统阴影（矩形投影会重新造出一条空白边）', () => {
     expect(rs).toMatch(/\.transparent\(true\)/);
     expect(rs).toMatch(/\.shadow\(false\)/);
+  });
+});
+
+describe('一次搜索里的五类命中：账号 + 笔记/题库/工具/任务', () => {
+  /** 后端 merge_ranked 给什么顺序就摆什么顺序：同级不跨源比时间，前端更不该自己重排。 */
+  it('每类各渲染自己的名称行、来源徽标与元信息', async () => {
+    mocks.quickSearch.mockResolvedValue(reply(mixedRows));
+    renderApp();
+    const input = screen.getByRole('textbox', { name: /全局搜索/ });
+    fireEvent.change(input, { target: { value: '电碳' } });
+    await waitFor(() => expect(mocks.quickSearch).toHaveBeenCalledWith('电碳'));
+
+    const options = await screen.findAllByRole('option');
+    expect(options).toHaveLength(4);
+    const texts = options.map((li) => li.textContent ?? '');
+
+    expect(texts[0]).toContain('变压器检修记录');
+    expect(texts[0]).toContain('…油位异常需按规程上报');
+    expect(texts[0]).toContain('笔记');
+    expect(texts[1]).toContain('负荷率换算');
+    expect(texts[1]).toContain('工具');
+    expect(texts[2]).toContain('下列设备属于一次设备的是');
+    expect(texts[2]).toContain('安规题库');
+    expect(texts[2]).toContain('第 42 题');
+    expect(texts[2]).toContain('题库');
+    expect(texts[3]).toContain('微服务发布');
+    expect(texts[3]).toContain('生产环境');
+    expect(texts[3]).toContain('任务');
+  });
+
+  /**
+   * 非账号那四类的 Enter 只有一个动作：把来源与这一条的 id 交回后端。
+   * 落点坐标（题在哪份库、第几页）与权限都在 `quick_reveal` 里现判现查，前端不自报；
+   * 而 `quick_action` 一次都不该被调到——那枚命令的入参是 targetId/itemId，
+   * 这四类根本没有这两个键，硬调就是拿一个凭据 id 的位置去填另一样东西。
+   */
+  it('Enter 只交回来源与 id，四种落点各归各的键', async () => {
+    mocks.quickReveal.mockResolvedValue({ action: 'reveal', ok: true, message: '已在主窗口打开' });
+    const input = await renderWithResults(mixedRows);
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(mocks.quickReveal).toHaveBeenCalledWith('note', 'n-1', undefined));
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(mocks.quickReveal).toHaveBeenCalledWith('tool', 'p-1', undefined));
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(mocks.quickReveal).toHaveBeenCalledWith('quiz', 'q-1', undefined));
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(mocks.quickReveal).toHaveBeenCalledWith('task', 'release', 'prod'));
+
+    expect(mocks.quickAction).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 非账号行不给动作钮。后端那四类本来就不下发 actions，
+   * 前端若自己补一颗「查看详情」，点下去就是一句兑不了的承诺——
+   * 笔记页没有"详情"这一层，题库那一类的落点是翻到那道题所在的页。
+   */
+  it('非账号行不摆动作按钮，只说明 Enter 会落到哪儿', async () => {
+    const input = await renderWithResults([noteRow, toolRow]);
+    expect(input).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '复制用户名' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '查看详情' })).toBeNull();
+    expect(screen.queryByText(/执行「/)).toBeNull();
+    // Enter 的说法必须说出来且是"打开"这一件事
+    expect(screen.getByText('打开这篇笔记')).toBeInTheDocument();
+  });
+
+  it('字段限定只覆盖保险库这件事在界面上说出来，不悄悄少搜四类', async () => {
+    mocks.quickSearch.mockResolvedValue({ ...reply([keyRow]), vaultOnly: true });
+    renderApp();
+    const input = screen.getByRole('textbox', { name: /全局搜索/ });
+    fireEvent.change(input, { target: { value: '系统:OA' } });
+    await screen.findByText('OA办公系统');
+    expect(await screen.findByText(/只覆盖保险库/)).toBeInTheDocument();
+
+    // 单关键词那一档不该出现这句——它确实五类都搜了。
+    // 这里必须等那句真的消失：系统名在两次查询的结果里是同一条，用 findByText 探它会被上一阶段的残留蒙住。
+    mocks.quickSearch.mockResolvedValue(reply([keyRow]));
+    fireEvent.change(input, { target: { value: 'OA' } });
+    await waitFor(() => expect(mocks.quickSearch).toHaveBeenCalledWith('OA'));
+    await waitFor(() => expect(screen.queryByText(/只覆盖保险库/)).toBeNull());
+  });
+
+  /**
+   * 账号那一条的字段一个都没少：别名、脱敏用户名、地址、该目标共 N 个账号，
+   * 以及扩展未就绪时那句降级说明的落点（chips）都还在原来的位置上。
+   */
+  it('账号命中仍按原来的形状渲染，徽标多一枚「账号」而不顶掉原来的', async () => {
+    const input = await renderWithResults([{ ...keyRow, credentialCountOnTarget: 3 }]);
+    expect(input).toBeTruthy();
+    const li = screen.getAllByRole('option')[0];
+    expect(li.textContent).toContain('OA办公系统');
+    expect(li.textContent).toContain('日常办公');
+    expect(li.textContent).toContain('该目标共 3 个账号');
+    expect(li.textContent).toContain('账号');
+    expect(li.textContent).toContain('网页');
+    // 收藏与默认两枚标记都还在
+    expect(li.querySelector('[aria-label="收藏"]')).not.toBeNull();
+    expect(screen.getByText('默认')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '复制密码' }).length).toBe(1);
   });
 });

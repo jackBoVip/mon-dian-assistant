@@ -86,7 +86,9 @@ export function AccountsPage() {
    */
   const pendingNav = useLauncherNav((s) => s.pending);
   useEffect(() => {
-    if (!pendingNav) return;
+    // 只吃落点是本页的那一条：现在这一枚 store 里流转的是五种落点的载荷，
+    // 别页的那一条不该把账号中心的选中项改掉（消费方各认各的 page，见 launcherNav.ts）
+    if (!pendingNav || pendingNav.page !== 'accounts') return;
     setPicked(pendingNav.targetId);
     setKeyword(pendingNav.keyword);
     setSearchOpen(pendingNav.keyword.length > 0);

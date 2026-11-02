@@ -56,10 +56,12 @@ pub fn ensure_window(app: &AppHandle) -> Result<WebviewWindow> {
 
 /// 显示浮层并把它放到取景带之外。返回是否真的显示（放不下时为 false）。
 pub fn show(app: &AppHandle, band: &Band, hit: MatchHit, show_options: bool) -> Result<bool> {
+    let cursor = (band.origin_x + band.cursor_x, band.origin_y + band.cursor_y);
     let Some((x, y)) = place_tip(
         band.rect(),
         (band.monitor.x, band.monitor.y, band.monitor.width, band.monitor.height),
         (TIP_WIDTH, TIP_HEIGHT),
+        cursor,
     ) else {
         hide(app)?;
         return Ok(false);
@@ -96,13 +98,17 @@ pub fn is_visible(app: &AppHandle) -> bool {
 /// 浮层左上角（屏幕逻辑坐标）。**必须**整块落在取景带之外：
 /// 先试带子下方，放不下再试上方；两边都放不下就返回 None（宁可不显示）。
 ///
-/// `band` = (x, y, w, h)，`monitor` = (x, y, w, h)，`tip` = (w, h)。
+/// 水平位置贴住光标：以前按「取景带左边 − 40」摆，带子本身比光标左移 160
+/// （光标通常落在题干中部），结果浮层跑到光标左边四百多像素，看着像挂在别处。
+///
+/// `band` = (x, y, w, h)，`monitor` = (x, y, w, h)，`tip` = (w, h)，`cursor` = (x, y)。
 pub fn place_tip(
     band: (f64, f64, f64, f64),
     monitor: (f64, f64, f64, f64),
     tip: (f64, f64),
+    cursor: (f64, f64),
 ) -> Option<(f64, f64)> {
-    let (bx, by, _bw, bh) = band;
+    let (_, by, _bw, bh) = band;
     let (mx, my, mw, mh) = monitor;
     let (tw, th) = tip;
     if tw > mw || th > mh {
@@ -110,7 +116,7 @@ pub fn place_tip(
     }
     let min_x = mx + SCREEN_MARGIN;
     let max_x = mx + mw - tw - SCREEN_MARGIN;
-    let x = (bx - 40.0).clamp(min_x, max_x.max(min_x));
+    let x = (cursor.0 - 24.0).clamp(min_x, max_x.max(min_x));
 
     let below = by + bh + TIP_GAP;
     if below + th <= my + mh - SCREEN_MARGIN {
@@ -135,9 +141,21 @@ mod tests {
     fn tip_goes_below_the_band_when_there_is_room() {
         let band = (100.0, 300.0, 760.0, 180.0);
         let monitor = (0.0, 0.0, 1920.0, 1080.0);
-        let (x, y) = place_tip(band, monitor, (440.0, 210.0)).unwrap();
+        let (x, y) = place_tip(band, monitor, (440.0, 210.0), (400.0, 340.0)).unwrap();
         assert_eq!(y, 300.0 + 180.0 + TIP_GAP);
         assert!(x >= 8.0 && x + 440.0 <= 1912.0);
+    }
+
+    /// 浮层的水平位置要贴住光标，而不是贴住取景带的左边：
+    /// 带子为了容纳题干会往左扩 160，按带子摆会把浮层甩到光标左侧几百像素。
+    #[test]
+    fn tip_hugs_the_cursor_horizontally() {
+        let band = (540.0, 300.0, 760.0, 180.0);
+        let monitor = (0.0, 0.0, 1920.0, 1080.0);
+        let cursor = (700.0, 340.0);
+        let (x, _) = place_tip(band, monitor, (440.0, 210.0), cursor).unwrap();
+        assert_eq!(x, 700.0 - 24.0);
+        assert!(x <= cursor.0 && cursor.0 <= x + 440.0, "光标应落在浮层的水平范围内");
     }
 
     #[test]
@@ -145,7 +163,7 @@ mod tests {
         // 光标贴近屏幕底部：下方放不下 210px，必须翻到取景带上方。
         let band = (100.0, 880.0, 760.0, 180.0);
         let monitor = (0.0, 0.0, 1920.0, 1080.0);
-        let (_, y) = place_tip(band, monitor, (440.0, 210.0)).unwrap();
+        let (_, y) = place_tip(band, monitor, (440.0, 210.0), (400.0, 920.0)).unwrap();
         assert_eq!(y, 880.0 - TIP_GAP - 210.0);
         assert!(y + 210.0 <= 880.0, "浮层不能压进取景带");
     }
@@ -154,8 +172,11 @@ mod tests {
     fn tip_is_clamped_to_the_monitor_horizontally() {
         let band = (1500.0, 100.0, 760.0, 180.0);
         let monitor = (0.0, 0.0, 1920.0, 1080.0);
-        let (x, _) = place_tip(band, monitor, (440.0, 210.0)).unwrap();
+        let (x, _) = place_tip(band, monitor, (440.0, 210.0), (1900.0, 140.0)).unwrap();
         assert!(x + 440.0 <= 1920.0 - SCREEN_MARGIN);
+        // 屏幕左缘同理：光标贴左边时浮层不能探出去。
+        let (x, _) = place_tip(band, monitor, (440.0, 210.0), (10.0, 140.0)).unwrap();
+        assert_eq!(x, SCREEN_MARGIN);
     }
 
     #[test]
@@ -163,8 +184,8 @@ mod tests {
         // 上下都放不下：宁可不出浮层，也不能让它落进取景带。
         let band = (0.0, 40.0, 400.0, 180.0);
         let monitor = (0.0, 0.0, 400.0, 260.0);
-        assert!(place_tip(band, monitor, (440.0, 210.0)).is_none());
+        assert!(place_tip(band, monitor, (440.0, 210.0), (200.0, 100.0)).is_none());
         // 窗口比屏幕还宽同样拒绝。
-        assert!(place_tip((0.0, 0.0, 100.0, 50.0), (0.0, 0.0, 300.0, 600.0), (440.0, 210.0)).is_none());
+        assert!(place_tip((0.0, 0.0, 100.0, 50.0), (0.0, 0.0, 300.0, 600.0), (440.0, 210.0), (50.0, 10.0)).is_none());
     }
 }

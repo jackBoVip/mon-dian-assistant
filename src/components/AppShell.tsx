@@ -5,13 +5,16 @@ import { AdminPage } from '../pages/AdminPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { LauncherSettingsPage } from '../pages/LauncherSettingsPage';
 import { QuizPage } from '../pages/QuizPage';
-import { AdminSidebar } from './admin/AdminSidebar';
+import { NotesPage } from '../pages/NotesPage';
+import { HtmlPagesPage } from '../pages/HtmlPagesPage';
+import { ReleasePage } from '../pages/ReleasePage';
+import { NavRail } from './NavRail';
 import { NotifyHost } from './ui/sonner';
 import { Loading, ErrorState, EmptyState } from './ui/StateBlocks';
 import { useBackendEventPayload } from '../lib/vaultEvents';
 import { useLauncherNav, type LauncherNavPayload } from '../state/launcherNav';
-import { firstReachablePage, useNavTree } from '../lib/menuTree';
-import { isAdminPage, isSettingsPage, type AdminPageKey, type PageKey } from '../lib/pageMeta';
+import { firstReachablePage, resolveTasksLanding, useNavTree } from '../lib/menuTree';
+import { isAdminPage, isSettingsPage, isTaskPage, type AdminPageKey, type PageKey } from '../lib/pageMeta';
 
 /**
  * 主窗口壳层：满幅的玻璃容器（内容与窗口边缘齐平）。
@@ -26,6 +29,7 @@ import { isAdminPage, isSettingsPage, type AdminPageKey, type PageKey } from '..
 export function AppShell() {
   const { nav, isLoading, error, refetch } = useNavTree();
   const [page, setPage] = useState<PageKey>('accounts');
+  // 齿轮里那一枚「系统管理」要回到上次看的那一页，而不是每次都跳回第一项
   const [lastAdminPage, setLastAdminPage] = useState<AdminPageKey | null>(null);
 
   function navigate(next: PageKey) {
@@ -45,12 +49,23 @@ export function AppShell() {
   }, [page, nav]);
 
   /**
-   * 浮层里点「查看详情」时，Rust 已经把浮层收起、把这一扇窗带到前台了，
-   * 剩下的一步是"落到账号中心并记下要看哪一条"——具体选中由 AccountsPage 消费 store 完成。
+   * 浮层里点 Enter 打开一条非账号命中时，Rust 已经把浮层收起、把这一扇窗带到前台了，
+   * 剩下的一步是"落到那一页并记下要打开哪一条"——具体选中由各页消费 store 完成。
    * 事件名与载荷键名两侧同源，判据在 src/lib/ipcContract.test.ts。
+   *
+   * 旧写法是无条件 `setPage('accounts')`：那时浮层只搜保险库，账号中心是唯一落点。
+   * 现在载荷自己说落到哪一页，`tasks` 是唯一的例外——它是分区名，二级页要按可达范围现算
+   * （`resolveTasksLanding`）。顶栏不给任务中心留胶囊，这条浮层落点是它唯一的入口，
+   * 所以可达范围算错时这里必须什么都不切，而不是切去一屏没有权限的空白页。
    */
   useBackendEventPayload<LauncherNavPayload>('launcher://open-detail', (payload) => {
-    setPage('accounts');
+    if (payload.page === 'tasks') {
+      const landing = nav ? resolveTasksLanding(nav) : null;
+      if (landing === null) return;
+      setPage(landing);
+    } else {
+      setPage(payload.page);
+    }
     useLauncherNav.getState().open(payload);
   });
 
@@ -64,15 +79,25 @@ export function AppShell() {
     }
     if (isAdminPage(effectivePage) && nav) {
       return (
-        <div className="admin-shell">
-          <AdminSidebar active={effectivePage} items={nav.admin} onNavigate={navigate} />
+        <div className="rail-shell">
+          <NavRail label="系统管理导航" active={effectivePage} items={nav.admin} onNavigate={navigate} />
           <AdminPage section={effectivePage} />
+        </div>
+      );
+    }
+    if (isTaskPage(effectivePage) && nav) {
+      return (
+        <div className="rail-shell">
+          <NavRail label="任务中心导航" active={effectivePage} items={nav.tasks} onNavigate={navigate} />
+          <ReleasePage />
         </div>
       );
     }
     if (isSettingsPage(effectivePage)) return <SettingsPage section={effectivePage} />;
     if (effectivePage === 'accounts') return <AccountsPage />;
     if (effectivePage === 'quiz') return <QuizPage />;
+    if (effectivePage === 'notes') return <NotesPage />;
+    if (effectivePage === 'html') return <HtmlPagesPage />;
     return <LauncherSettingsPage />;
   }
 
@@ -85,12 +110,7 @@ export function AppShell() {
       </div>
 
       <div className="app-container">
-        <TopBar
-          active={effectivePage ?? page}
-          lastAdminPage={lastAdminPage}
-          nav={nav}
-          onNavigate={navigate}
-        />
+        <TopBar active={effectivePage ?? page} lastAdminPage={lastAdminPage} nav={nav} onNavigate={navigate} />
         <main className="main-content">
           <div className="content-layout">
             {error ? (

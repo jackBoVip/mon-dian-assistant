@@ -1,6 +1,6 @@
 [package]
 name = "mon-dian-assistant"
-version = "1.0.1"
+version = "1.1.0"
 description = "蒙电信产助手 — 本地优先、安全优先的跨平台凭据保险库桌面应用"
 authors = ["内蒙古电力业务场景项目组"]
 edition = "2021"
@@ -19,7 +19,9 @@ crate-type = ["lib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# tray-icon：关闭窗口要驻留到系统托盘；image-png：托盘图标由 include_bytes! 编入，需解码 PNG。
+# unstable：右栏页面库要把一块子 webview 嵌进主窗（Window::add_child），这条 API 只在 unstable 下暴露。
+tauri = { version = "2", features = ["tray-icon", "image-png", "unstable"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
@@ -46,7 +48,12 @@ constant_time_eq = "0.3"
 open = "5"
 arboard = "3"
 hex = "0.4"
-ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+ureq = { version = "2", default-features = false, features = ["tls", "json", "gzip"] }
+# 任务中心的企业 CA 注入：ureq 的 tls_config 收的是 rustls::ClientConfig，
+# 根证书库要自己拼（webpki 内置根 + profile 里指定的那一份 PEM），所以这两个直接依赖必须点名，
+# 版本与 ureq 2.12 的 tls feature 用的那一套对齐，避免出现两份 rustls。
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "0.26"
 ed25519-dalek = { version = "2", features = ["std"] }
 url = "2"
 socket2 = "0.6"
@@ -65,6 +72,11 @@ pure-onnx-ocr = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # 光标附近截屏；只用到 Monitor 的截图能力，不启用窗口/录制功能。
 xcap = "0.9"
+
+# Linux 的托盘靠 appindicator 动态库，缺库时 libappindicator-sys 的 Lazy 会 panic（release 是 panic = "abort"）；
+# tray::install 建托盘前自己 dlopen 探一次再决定降级，所以这里要 libloading（与 libappindicator-sys 同一份 0.8）。
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.8"
 
 [dev-dependencies]
 tempfile = "3"

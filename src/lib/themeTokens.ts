@@ -8,13 +8,13 @@
  *  - 值逐枚按字面类型校验（颜色 / blur() / 阴影列表），不合规就整份拒，并给出行号与原因；
  *  - 生成 CSS 时由 `buildThemeRule` 自己拼片段，**从不**把原文塞进 style 标签。
  *
- * 为什么要**整套齐全**：`:root` 里没有这 32 枚的默认值（那里只有 radius / spacing / font 那几档），
+ * 为什么要**整套齐全**：`:root` 里没有这一整套令牌的默认值（那里只有 radius / spacing / font 那几档），
  * 少一枚就意味着界面上某处引用取不到值，整站退回浏览器默认色——这正是 settings.rs 里
  * 「绝不让一个 tokens.css 里没有的名字进界面」那条注释要防的事。所以校验器不补默认值：
  * 缺哪几枚就点名哪几枚，把模板里那一行粘回来即可。
  *
  * 因此这份文件里不留第二套「出厂主题表」（原先那份 GLASS_TOKENS 已删）。只有 TOKEN_TEMPLATE 带着
- * 32 个示例值——模板要能改着看；而"那 32 个值与 tokens.css 的 glass 块逐枚相同"由
+ * 整套示例值——模板要能改着看；而"那些值与 tokens.css 的 glass 块逐枚相同"由
  * themeTokens.test.ts 钉住：它是被核过的派生物，不是没人管的第二份真相。
  */
 
@@ -32,6 +32,8 @@ export const THEME_TOKEN_NAMES = [
   '--t-success',
   '--t-success-soft',
   '--t-warning',
+  '--t-warning-soft',
+  '--t-danger-soft',
   '--t-star',
   '--t-accent',
   '--t-surface',
@@ -205,7 +207,7 @@ export function buildThemeRule(id: string, tokens: Record<string, string>): stri
   return `[data-theme="custom-${id}"]{${decls}}`;
 }
 
-/** 模板：34 行里的 32 枚，逐枚注明管的是界面上哪一块；值取 glass，改哪枚看哪枚。 */
+/** 模板：与 THEME_TOKEN_NAMES 同套的示例值，逐枚注明管的是界面上哪一块；值取 glass，改哪枚看哪枚。 */
 export const TOKEN_TEMPLATE = `/* 自定义主题模板
  * 一行一枚，形如 --令牌名: 值;   改不了的可以整行删掉——删掉的会落回出厂那套「极光液态」的值。
  * 颜色可写 #hex（3/4/6/8 位）、rgb()/rgba()、transparent，或 var(--另一枚令牌)。
@@ -229,6 +231,8 @@ export const TOKEN_TEMPLATE = `/* 自定义主题模板
 --t-success: #10b981;
 --t-success-soft: rgba(16, 185, 129, 0.1);
 --t-warning: #f59e0b;
+--t-warning-soft: rgba(245, 158, 11, 0.12);
+--t-danger-soft: rgba(225, 29, 72, 0.1);
 --t-star: #f59e0b;
 --t-accent: var(--t-primary-hover);
 

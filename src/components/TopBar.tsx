@@ -3,7 +3,7 @@ import { useSession } from '../state/session';
 import { api } from '../lib/api';
 import { notify } from '../state/notify';
 import { toNormalisedError } from '../lib/errors';
-import { isAdminPage, isGearPage, type AdminPageKey, type PageKey, type TopKey } from '../lib/pageMeta';
+import { isAdminPage, isGearPage, type AdminPageKey, type PageKey } from '../lib/pageMeta';
 import { resolveAdminLanding, type NavTree } from '../lib/menuTree';
 import { ThemeMenu } from './ThemeMenu';
 import { ProfileModal } from './shell/ProfileModal';
@@ -16,6 +16,7 @@ import { BrandLogo } from './ui/BrandLogo';
 
 export interface TopBarProps {
   active: PageKey;
+  /** 齿轮里那一枚「系统管理」的落点依据：上次访问过的二级页；没进过则传 null。 */
   lastAdminPage: AdminPageKey | null;
   /** 菜单树与权限推导的结果；未就绪时传 null，胶囊与下拉按「宁缺不猜」留空。 */
   nav: NavTree | null;
@@ -25,13 +26,16 @@ export interface TopBarProps {
 /**
  * 顶栏（原型 .top-navbar，80px 单行）：品牌 + 胶囊导航 + 右侧图标组。
  *
- * 一级项与齿轮两组都来自 lib/menuTree 的推导结果：节点决定顺序与启停，权限决定可见性。
+ * 一级项与齿轮三组都来自 lib/menuTree 的推导结果：节点决定顺序与启停，权限决定可见性。
  * 菜单可见性只决定入口是否出现，真正的拒绝始终在后端。
  */
 export function TopBar({ active, lastAdminPage, nav, onNavigate }: TopBarProps) {
   const tops = nav?.top ?? [];
   const settings = nav?.settings ?? [];
   const utilities = nav?.utilities ?? [];
+  // 系统管理收成齿轮里的这一枚（交付方 2026-11-02）：五枚二级页不在下拉里平铺，
+  // 点它进上次访问的那一页，换页靠进去之后页面左侧那条竖排导航。
+  const adminEntry = nav?.adminEntry ?? null;
   const nickname = useSession((s) => s.status?.nickname ?? '未知');
   const lock = useSession((s) => s.lock);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -39,22 +43,6 @@ export function TopBar({ active, lastAdminPage, nav, onNavigate }: TopBarProps) 
 
   function openSearch() {
     void api.launcherVisibility(true).catch((raw) => notify('danger', toNormalisedError(raw).message));
-  }
-
-  function pickTop(key: TopKey) {
-    if (key === 'accounts' || key === 'quiz') {
-      onNavigate(key);
-      return;
-    }
-    const landing = nav ? resolveAdminLanding(nav, lastAdminPage) : null;
-    if (landing) onNavigate(landing);
-  }
-
-  /** 胶囊的激活态：账号中心与题库各自认自己，系统管理认它名下任意二级页。 */
-  function isTopActive(key: TopKey): boolean {
-    if (key === 'accounts') return active === 'accounts';
-    if (key === 'quiz') return active === 'quiz';
-    return isAdminPage(active);
   }
 
   return (
@@ -74,8 +62,8 @@ export function TopBar({ active, lastAdminPage, nav, onNavigate }: TopBarProps) 
               key={entry.id}
               type="button"
               className="nav-item"
-              aria-current={isTopActive(entry.key) ? 'page' : undefined}
-              onClick={() => pickTop(entry.key)}
+              aria-current={active === entry.key ? 'page' : undefined}
+              onClick={() => onNavigate(entry.key)}
             >
               {entry.label}
             </button>
@@ -93,7 +81,7 @@ export function TopBar({ active, lastAdminPage, nav, onNavigate }: TopBarProps) 
         <Menu
           label="设置"
           icon="settings"
-          triggerClassName={isGearPage(active) ? 'icon-btn is-active' : undefined}
+          triggerClassName={isGearPage(active) || isAdminPage(active) ? 'icon-btn is-active' : undefined}
         >
           {settings.map((item) => (
             <DropdownItem key={item.id} icon={item.icon} onPick={() => onNavigate(item.page)}>
@@ -106,6 +94,18 @@ export function TopBar({ active, lastAdminPage, nav, onNavigate }: TopBarProps) 
               {item.label}
             </DropdownItem>
           ))}
+          {adminEntry !== null && (settings.length > 0 || utilities.length > 0) ? <DropdownDivider /> : null}
+          {adminEntry !== null ? (
+            <DropdownItem
+              icon="shield"
+              onPick={() => {
+                const landing = nav ? resolveAdminLanding(nav, lastAdminPage) : null;
+                if (landing) onNavigate(landing);
+              }}
+            >
+              {adminEntry.label}
+            </DropdownItem>
+          ) : null}
         </Menu>
 
         <Menu

@@ -14,6 +14,13 @@ pub mod perm {
     pub const MENU_NODE_PERMISSIONS: &str = "menu.node.system.permissions";
     /// 题库是一级根页，入口键与账号中心同属「一级节点键」这一档。
     pub const MENU_TOP_QUIZ: &str = "menu.node.top.quiz";
+    /// 任务中心是一级分组，微服务发布是它名下的第一枚二级页。
+    pub const MENU_TOP_TASKS: &str = "menu.node.top.tasks";
+    pub const MENU_TASK_RELEASE: &str = "menu.node.task.release";
+    /// 笔记是一级根页，入口键与题库同属「一级节点键」这一档。
+    pub const MENU_TOP_NOTES: &str = "menu.node.top.notes";
+    /// 工具（页面库）同样是一级根页；别与齿轮里的 menu.quick_launcher 混为一谈。
+    pub const MENU_TOP_TOOLS: &str = "menu.node.top.tools";
     // 账号台账（外部系统凭据）
     pub const ACC_READ: &str = "accounts.read";
     pub const ACC_CREATE: &str = "accounts.create";
@@ -42,6 +49,19 @@ pub mod perm {
     pub const QUIZ_LIBRARY_IMPORT: &str = "quiz.library.import";
     pub const QUIZ_LIBRARY_MANAGE: &str = "quiz.library.manage";
     pub const QUIZ_ASSISTANT_USE: &str = "quiz.assistant.use";
+    // 任务中心 · 微服务发布。生产发布单独一枚：能发测试环境不等于能发生产。
+    pub const TASK_RELEASE_VIEW: &str = "task.release.view";
+    pub const TASK_RELEASE_CONFIGURE: &str = "task.release.configure";
+    pub const TASK_RELEASE_RUN: &str = "task.release.run";
+    pub const TASK_RELEASE_RUN_PROD: &str = "task.release.run_prod";
+    // 笔记：个人内容，读与写两枚都回填三档内置角色，不做管理员门槛。
+    pub const NOTES_READ: &str = "notes.read";
+    pub const NOTES_WRITE: &str = "notes.write";
+    // 页面库：团队共用的 HTML 页面。读给三档，写（新建/修改/删除）只给两档管理员。
+    pub const HTML_PAGE_READ: &str = "html.page.read";
+    pub const HTML_PAGE_CREATE: &str = "html.page.create";
+    pub const HTML_PAGE_UPDATE: &str = "html.page.update";
+    pub const HTML_PAGE_DELETE: &str = "html.page.delete";
 }
 
 /// 当前使用者的全部权限键（菜单 + 操作）。

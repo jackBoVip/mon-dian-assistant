@@ -37,6 +37,12 @@ pub const TIP_HOLD_MS: u64 = 1800;
 pub const SWITCH_CONFIRM_POLLS: u32 = 2;
 /// 同一格内的 OCR 文本复用时长。
 const OCR_CACHE_MS: u64 = 700;
+/// 光标稳住这么久就先开始识别，不等 dwell 倒计时走完。
+///
+/// 早先的时序是「倒计时走完 → 截屏 → OCR → 显示」，两段是串行的：dwell 520ms
+/// 加 OCR 约 400ms，人实际等 1 秒上下。现在识别与倒计时并行，剩下的等待约为两者
+/// 里更长的那一段。阈值取 150ms 是给手抖留的余量——比它短的停顿不值得付一次 OCR。
+const PREFETCH_AFTER_MS: u64 = 150;
 /// 光标落点网格：18 逻辑像素以内的移动视为同一处。
 const CACHE_GRID_PX: f64 = 18.0;
 /// 题干块最多几行、多少字。
@@ -349,6 +355,9 @@ fn spawn_thread(app: &AppHandle, core: &SharedCore, user: &str, prefs: &Assistan
     let app_handle = app.clone();
     let core_handle: SharedCore = Arc::clone(core);
     let stop_flag = Arc::clone(&stop);
+    // 先把浮层窗口建出来：建窗 + 加载页面要几百毫秒，放在启用这一刻付掉，
+    // 而不是让第一次命中答案的人多等一次。失败就算了，命中时还会再试。
+    let _ = tip::ensure_window(app);
     let handle = std::thread::Builder::new()
         .name("mda-quiz-hover".into())
         .spawn(move || hover_loop(app_handle, core_handle, cfg, epoch, stop_flag))
@@ -374,6 +383,9 @@ struct HoverState {
     /// 最近一次 OCR 的落点格子与时间。同格内的那几轮不再截屏——
     /// 结果已经匹配过，重跑一遍只会得到同一个答案。
     cache: Option<((i64, i64), Instant)>,
+    /// dwell 倒计时期间提前算好的答案（格子 → 命中）。
+    /// `Some((key, None))` 表示这一格已经识别过但没匹配到，不必再跑一遍。
+    preview: Option<((i64, i64), Option<Vec<MatchHit>>)>,
     /// 光标这一处目前是否还停在已显示的题上。缓存复用的那些 tick 据此决定
     /// 是给旧答案续命还是开始倒计时收起。
     last_round_hit: bool,
@@ -453,6 +465,7 @@ fn tick(
     if over_own_window(app, px, py) {
         st.anchor = None;
         st.pending = None;
+        st.preview = None;
         st.last_round_hit = false;
         if st.shown.take().is_some() {
             let _ = tip::hide(app);
@@ -462,21 +475,22 @@ fn tick(
 
     let (cx, cy) = capture::cursor_logical(app)?;
     let now = Instant::now();
-    match st.anchor {
+    let dwell = Duration::from_millis(cfg.dwell_ms.max(0) as u64);
+    let dwell_done = match st.anchor {
         None => {
             st.anchor = Some((cx, cy, now));
+            st.preview = None;
             return Ok(());
         }
         Some((ax, ay, at)) => {
             if (cx - ax).hypot(cy - ay) > STABLE_RADIUS_PX {
                 st.anchor = Some((cx, cy, now));
+                st.preview = None;
                 return Ok(());
             }
-            if at.elapsed() < Duration::from_millis(cfg.dwell_ms.max(0) as u64) {
-                return Ok(());
-            }
+            at.elapsed() >= dwell
         }
-    }
+    };
 
     // 人已经走到别处：旧答案不能跟过去。
     if let Some(shown) = &st.shown {
@@ -487,39 +501,43 @@ fn tick(
         }
     }
 
-    // 同一格子里 OCR 结果没变：不重复截屏与匹配，只处理「旧答案该续命还是该收起」。
-    // 枚举显示器与截屏都在这一行之后，所以光标不动时每 120ms 只读一次光标坐标。
     let key = grid_key(cx, cy);
-    if let Some((k, at)) = st.cache {
-        if k == key && at.elapsed() < Duration::from_millis(OCR_CACHE_MS) {
-            return hold(app, st);
+    let cache_fresh = matches!(
+        st.cache,
+        Some((k, at)) if k == key && at.elapsed() < Duration::from_millis(OCR_CACHE_MS)
+    );
+
+    if !dwell_done {
+        // 倒计时还没走完：光标已经稳住的够久就先把答案算出来，别让 OCR 串在 dwell 后面。
+        let prefetched = st.preview.as_ref().map(|(k, _)| *k == key).unwrap_or(false);
+        let stable = st.anchor.map(|(_, _, at)| at.elapsed()).unwrap_or_default();
+        if !cache_fresh && !prefetched && stable >= Duration::from_millis(PREFETCH_AFTER_MS) {
+            let hits = identify(app, core, prefs, st, cx, cy)?;
+            st.preview = Some((key, hits));
+        }
+        // 预先识别跑完时倒计时可能已经到期：就地往下走，不再多等一个 120ms 的 tick。
+        if !st.anchor.map(|(_, _, at)| at.elapsed() >= dwell).unwrap_or(false) {
+            return Ok(());
         }
     }
 
-    let band = capture::band_at_cursor(app)?;
-    let (lines, cursor_img) = take_lines(&band, key, st)?;
-    let variants = stem_variants(&lines, cursor_img);
-    if variants.is_empty() {
-        return miss(app, st);
+    // 同一格子里 OCR 结果没变：不重复截屏与匹配，只处理「旧答案该续命还是该收起」。
+    // 但预识别刚算出来的那一格不能走这条捷径——`take_lines` 顺手写的缓存会把它
+    // 短路成一次 hold，倒计时走完也不会显示。
+    // 枚举显示器与截屏都在这一行之后，所以光标不动时每 120ms 只读一次光标坐标。
+    let preview_ready = st.preview.as_ref().map(|(k, _)| *k == key).unwrap_or(false);
+    if cache_fresh && !preview_ready {
+        return hold(app, st);
     }
 
-    let scope = scope_of(prefs)?;
-    let mut best: Option<Vec<MatchHit>> = None;
-    for variant in &variants {
-        let hits = matcher::match_text(&core.db, variant, scope.as_deref())?;
-        let better = match (best.as_ref(), hits.first()) {
-            (_, None) => false,
-            (None, Some(_)) => true,
-            (Some(cur), Some(h)) => cur
-                .first()
-                .map(|c| h.score > c.score)
-                .unwrap_or(true),
-        };
-        if better {
-            best = Some(hits);
+    let hits = match st.preview.take() {
+        Some((k, hits)) if k == key => hits,
+        other => {
+            st.preview = other;
+            identify(app, core, prefs, st, cx, cy)?
         }
-    }
-    let Some(hits) = best else { return miss(app, st) };
+    };
+    let Some(hits) = hits else { return miss(app, st) };
     let Some(hit) = hits.first().cloned() else { return miss(app, st) };
 
     let same = st
@@ -560,10 +578,18 @@ fn tick(
             shown.at = now;
         }
         if !tip::is_visible(app) {
+            let band = capture::band_at_cursor(app)?;
             tip::show(app, &band, hit, cfg.show_options)?;
         }
         return Ok(());
     }
+    // 摆放用的是**此刻**的取景带：预识别时算出来的那一条可能已经过了几百毫秒。
+    let band = capture::band_at_cursor(app)?;
+    log::debug!(
+        "quiz tip: 停稳→显示 {}ms · score {:.2}",
+        st.anchor.map(|(_, _, at)| at.elapsed().as_millis()).unwrap_or(0),
+        hit.score
+    );
     if tip::show(app, &band, hit.clone(), cfg.show_options)? {
         st.shown = Some(Shown { question_id: hit.question_id, at: now, anchor: (cx, cy) });
     } else {
@@ -571,6 +597,42 @@ fn tick(
         st.shown = None;
     }
     Ok(())
+}
+
+/// 一次完整的「定位 + 截屏 + 识别 + 匹配」。返回 `None` 表示这一带没有可用题干。
+fn identify(
+    app: &AppHandle,
+    core: &SharedCore,
+    prefs: &AssistantPreferences,
+    st: &mut HoverState,
+    cx: f64,
+    cy: f64,
+) -> Result<Option<Vec<MatchHit>>> {
+    let key = grid_key(cx, cy);
+    let band = capture::band_at_cursor(app)?;
+    let (lines, cursor_img) = take_lines(&band, key, st)?;
+    let variants = stem_variants(&lines, cursor_img);
+    if variants.is_empty() {
+        return Ok(None);
+    }
+
+    let scope = scope_of(prefs)?;
+    let mut best: Option<Vec<MatchHit>> = None;
+    for variant in &variants {
+        let hits = matcher::match_text(&core.db, variant, scope.as_deref())?;
+        let better = match (best.as_ref(), hits.first()) {
+            (_, None) => false,
+            (None, Some(_)) => true,
+            (Some(cur), Some(h)) => cur
+                .first()
+                .map(|c| h.score > c.score)
+                .unwrap_or(true),
+        };
+        if better {
+            best = Some(hits);
+        }
+    }
+    Ok(best)
 }
 
 fn take_lines(band: &Band, key: (i64, i64), st: &mut HoverState) -> Result<(Vec<OcrLine>, (f64, f64))> {
@@ -626,6 +688,12 @@ fn pointer(app: &AppHandle) -> Option<(f64, f64)> {
 fn over_own_window(app: &AppHandle, px: f64, py: f64) -> bool {
     for label in ["main", crate::launcher::LAUNCHER_LABEL, tip::TIP_LABEL] {
         let Some(w) = app.get_webview_window(label) else { continue };
+        // 藏起来的窗口不该挡住鼠标：浮层显示过一次就常驻内存，它最后一次的落点
+        // 会被当成"自己的窗口"，把那一带的识别整片掐掉。读不到可见性时按可见处理
+        // （宁可少识别，也不要把本应用自己的界面文字当成题目）。
+        if !w.is_visible().unwrap_or(true) {
+            continue;
+        }
         let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else { continue };
         let (x, y) = (pos.x as f64, pos.y as f64);
         let (right, bottom) = (x + size.width as f64, y + size.height as f64);

@@ -199,6 +199,14 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<ParsedQuestion>> {
     Ok(word::blocks_to_questions(blocks))
 }
 
+/// 要的是**表格形状**而不是题目的文档（发布说明的「微服务发布清单」）走这条路：
+/// 同一套 zip 配额与 XML 状态机，块原样交出，不做题库那套按形状压平。
+/// 表格压平只在题库语义下才是对的；发布说明里压平就等于把列抹掉了。
+pub fn blocks(bytes: &[u8]) -> Result<Vec<Block>> {
+    let xml = read_document_xml(bytes)?;
+    walk(&xml)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

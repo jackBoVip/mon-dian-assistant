@@ -21,6 +21,7 @@ const BINDINGS: &[(&str, &str)] = &[
     ("update", "gear.settings"),
     ("tools", "gear.settings"),
     ("launcher", "gear.tools"),
+    ("release", "top.tasks"),
 ];
 
 /// 这两个分组名在界面上没有独立显示位，改名无法被兑现，直接拒绝。
@@ -306,11 +307,14 @@ mod tests {
     }
 
     #[test]
-    fn seed_has_five_roots_and_eleven_leaves() {
+    fn seed_matches_the_page_bindings() {
         let nodes = list(&db()).unwrap();
-        assert_eq!(nodes.len(), 16);
-        assert_eq!(nodes.iter().filter(|n| n.parent_id.is_none()).count(), 5);
-        assert_eq!(nodes.iter().filter(|n| n.parent_id.is_some()).count(), 11);
+        let leaves = nodes.iter().filter(|n| n.parent_id.is_some()).count();
+        let roots = nodes.iter().filter(|n| n.parent_id.is_none()).count();
+        // 叶数由可绑定页面表推出，加页时这里不用跟着改数字
+        assert_eq!(leaves, BINDINGS.len());
+        assert_eq!(roots + leaves, nodes.len());
+        assert_eq!(roots, 8, "账号中心 / 题库 / 任务中心 / 笔记 / 系统管理 / 设置 / 快捷入口 / 工具");
         for (page, parent) in BINDINGS {
             let node = nodes
                 .iter()
@@ -320,7 +324,7 @@ mod tests {
         }
         assert!(nodes.iter().filter(|n| n.parent_id.is_some()).all(|n| n.builtin));
         assert_eq!(parent_key_for("accounts"), None);
-        assert_eq!(bindable_pages().len(), 11);
+        assert_eq!(bindable_pages().len(), BINDINGS.len());
     }
 
     #[test]
@@ -493,9 +497,10 @@ mod tests {
     #[test]
     fn delete_only_custom_nodes() {
         let d = db();
+        let baseline = list(&d).unwrap().len();
         let builtin = by_key(&list(&d).unwrap(), "system.users").id.clone();
         assert!(matches!(delete(&d, &builtin), Err(AppError::MenuProtected(_))));
-        assert_eq!(list(&d).unwrap().len(), 16);
+        assert_eq!(list(&d).unwrap().len(), baseline);
 
         let custom = create(&d, "别名", "users").unwrap();
         let perm_key = format!("menu.node.{custom}");
@@ -509,7 +514,7 @@ mod tests {
         };
         assert_eq!(count_perms(&d.lock_conn()), 1);
         delete(&d, &custom).unwrap();
-        assert_eq!(list(&d).unwrap().len(), 16);
+        assert_eq!(list(&d).unwrap().len(), baseline);
         let conn = d.lock_conn();
         assert_eq!(count_perms(&conn), 0, "删入口必须同时删掉它的菜单权限");
         let grants: i64 = conn

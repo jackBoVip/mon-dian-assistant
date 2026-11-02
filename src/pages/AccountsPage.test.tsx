@@ -199,7 +199,7 @@ describe('主从两栏的取数与选中', () => {
   it('浮层「查看详情」跳过来时：选中那条系统、把带过来的关键字填进右栏筛选，只剩那一条', async () => {
     // 交付方 2026-10-20 指定的落点：「点击查看详情,后直接跳转到这个页面搜索出当前搜索的信息」——
     // 是"落到这一页、把那条筛出来"，不是弹一只抽屉。
-    useLauncherNav.getState().open({ targetId: 't-1', itemId: 'i-5', keyword: '账号-5' });
+    useLauncherNav.getState().open({ page: 'accounts', targetId: 't-1', itemId: 'i-5', keyword: '账号-5' });
     renderPage();
     const input = await screen.findByPlaceholderText('搜索账号名称...');
     expect(input).toHaveValue('账号-5');
@@ -211,6 +211,23 @@ describe('主从两栏的取数与选中', () => {
     expect(mocks.targetDetail).not.toHaveBeenCalled();
     // 消费完必须清空：下一次进这一页不该被上一次那条拽走
     expect(useLauncherNav.getState().pending).toBeNull();
+  });
+
+  /**
+   * 这一枚 store 现在流转的是五种落点的载荷（笔记/题库/工具/任务中心都从它过）。
+   * 账号页必须只认 `page === 'accounts'` 那一条：别的页的导航如果也被这里吃掉，
+   * 结果是主窗停在账号中心、而那条笔记永远打不开——且全程没有任何报错。
+   */
+  it('别页的导航载荷不动本页的选中与筛选', async () => {
+    useLauncherNav.getState().open({ page: 'notes', noteId: 'n-9' });
+    renderPage();
+    // 就绪判据用右栏那张表（"系统-1"这串在左栏与右栏标题里都出现，等它会撞到多个元素）。
+    // 左栏照常渲染、右栏仍是默认选中那套；搜索框保持它默认的收起态——
+    // 本页要是误吃了这条笔记导航，它会带着一个凭空出现的关键字被打开（上面那条用例守的正是那个形状）
+    await screen.findByRole('table', { name: '当前系统的托管账号' });
+    expect(screen.queryByPlaceholderText('搜索账号名称...')).toBeNull();
+    // 不是本页的那一条不消费：留给真正的那一页去取
+    expect(useLauncherNav.getState().pending).toEqual({ page: 'notes', noteId: 'n-9' });
   });
 
   it('系统数超过载入数时如实播报缺口，句里是 260 与 200 这两个真数', async () => {

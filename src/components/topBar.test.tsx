@@ -13,9 +13,10 @@ import { useTheme } from '../state/theme';
 import type { AppStatus } from '../lib/types';
 
 /**
- * 顶栏的测试基准：一级胶囊是「账号中心 / 题库 / 系统管理」三项，齿轮下拉分两组。
+ * 顶栏的测试基准：一级胶囊是「账号中心 / 题库 / 笔记 / 工具」四项（任务中心与系统管理
+ * 都不占顶栏，交付方 2026-11-02），齿轮下拉三组：设置页、工具页，以及收成的那一枚「系统管理」。
  * 顺序与启停来自 menu_nodes，可见性来自 my_permissions——两者在 lib/menuTree 合并后
- * 以 NavTree 传进来。这里守的是顶栏如何消费这棵树，以及设置页激活时齿轮的激活态。
+ * 以 NavTree 传进来。这里守的是顶栏如何消费这棵树，以及设置页/系统管理页激活时齿轮的激活态。
  */
 const mocks = vi.hoisted(() => ({
   launcherVisibility: vi.fn(),
@@ -33,7 +34,13 @@ const FULL_PERMS = new Set<string>([
   ...Object.values(PERM),
   ...seedMenuNodes().map((node) => node.permKey),
 ]);
-const SYSTEM_LABEL = '系统管理';
+const ADMIN_LABELS = [
+  PAGE_META.users.label,
+  PAGE_META.roles.label,
+  PAGE_META.menus.label,
+  PAGE_META.permissions.label,
+  PAGE_META.audit.label,
+];
 
 function permOf(nodeKey: string): string {
   const node = seedMenuNodes().find((n) => n.nodeKey === nodeKey);
@@ -56,8 +63,8 @@ function status(nickname: string): AppStatus {
 
 function renderTopBar(
   active: PageKey = 'accounts',
-  lastAdminPage: AdminPageKey | null = null,
   nav: NavTree | null = navFor(),
+  lastAdminPage: AdminPageKey | null = null,
 ) {
   const onNavigate = vi.fn();
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -91,49 +98,61 @@ beforeEach(() => {
   useNotify.setState({ items: [] });
 });
 
-describe('一级胶囊是账号中心、题库与系统管理', () => {
+describe('一级胶囊是账号中心、题库、笔记与工具', () => {
   it('导航树还没就绪时胶囊里一个业务项都没有（宁缺不猜）', () => {
-    renderTopBar('accounts', null, null);
+    renderTopBar('accounts', null);
     expect(within(capsule()).queryAllByRole('button')).toHaveLength(0);
   });
 
-  it('全量权限下是三项，顺序为账号中心 → 题库 → 系统管理', () => {
+  it('全量权限下是四项，顺序为账号中心 → 题库 → 笔记 → 工具', () => {
     renderTopBar();
     expect(within(capsule()).getAllByRole('button').map((el) => el.textContent)).toEqual([
       PAGE_META.accounts.label,
       PAGE_META.quiz.label,
-      SYSTEM_LABEL,
+      PAGE_META.notes.label,
+      '工具',
     ]);
   });
 
   it('只给 menu.accounts 时只有账号中心', () => {
-    renderTopBar('accounts', null, navFor(new Set([PERM.MENU_ACCOUNTS])));
+    renderTopBar('accounts', navFor(new Set([PERM.MENU_ACCOUNTS])));
     expect(within(capsule()).getAllByRole('button').map((el) => el.textContent)).toEqual([
       PAGE_META.accounts.label,
     ]);
   });
 
-  it('只有 menu.system 而没有可用二级页时系统管理不出现（点进去是空壳）', () => {
-    renderTopBar('accounts', null, navFor(new Set([PERM.MENU_SYSTEM])));
-    expect(within(capsule()).queryByText(SYSTEM_LABEL)).toBeNull();
+  it('任务中心与系统管理一枚都不进胶囊：两组的权限全给也不出', () => {
+    const nav = navFor();
+    expect(nav.tasks.length + nav.admin.length).toBeGreaterThan(0);
+    renderTopBar('accounts', nav);
+    expect(within(capsule()).queryByText('任务中心')).toBeNull();
+    expect(within(capsule()).queryByText('系统管理')).toBeNull();
   });
 
-  it('停用 top.system 后系统管理从胶囊消失；自定义别名按节点名字上屏', () => {
+  it('停用 top.system 后顶栏一枚不少（它本来就不在顶栏），齿轮里那一枚「系统管理」消失', () => {
     const disabled = seedMenuNodes().map((node) =>
       node.id === 'mn-top-system' ? { ...node, status: 'disabled' as const } : node,
     );
-    const first = renderTopBar('accounts', null, navFor(FULL_PERMS, disabled));
-    expect(within(capsule()).queryByText(SYSTEM_LABEL)).toBeNull();
-    first.unmount();
-
-    const renamed = seedMenuNodes().map((node) =>
-      node.id === 'mn-top-system' ? { ...node, label: '后台' } : node,
-    );
-    renderTopBar('accounts', null, navFor(FULL_PERMS, renamed));
-    expect(within(capsule()).getByRole('button', { name: '后台' })).toBeInTheDocument();
+    renderTopBar('accounts', navFor(FULL_PERMS, disabled));
+    expect(within(capsule()).getAllByRole('button').map((el) => el.textContent)).toEqual([
+      PAGE_META.accounts.label,
+      PAGE_META.quiz.label,
+      PAGE_META.notes.label,
+      '工具',
+    ]);
+    const menu = openMenu('设置');
+    expect(within(menu).queryByRole('menuitem', { name: '系统管理' })).toBeNull();
   });
 
-  it('当前页那颗带 aria-current=page；系统管理在任一二级页都算当前', () => {
+  it('自定义别名按节点名字上屏：改的是胶囊上那一枚', () => {
+    const renamed = seedMenuNodes().map((node) =>
+      node.id === 'mn-top-accounts' ? { ...node, label: '使用者' } : node,
+    );
+    renderTopBar('accounts', navFor(FULL_PERMS, renamed));
+    expect(within(capsule()).getByRole('button', { name: '使用者' })).toBeInTheDocument();
+  });
+
+  it('当前页那颗带 aria-current=page，其余三颗不带', () => {
     renderTopBar();
     expect(within(capsule()).getByRole('button', { name: PAGE_META.accounts.label })).toHaveAttribute(
       'aria-current',
@@ -142,7 +161,6 @@ describe('一级胶囊是账号中心、题库与系统管理', () => {
     expect(within(capsule()).getByRole('button', { name: PAGE_META.quiz.label })).not.toHaveAttribute(
       'aria-current',
     );
-    expect(within(capsule()).getByRole('button', { name: SYSTEM_LABEL })).not.toHaveAttribute('aria-current');
   });
 
   it('停在题库页时只有题库那颗带 aria-current=page', () => {
@@ -152,30 +170,48 @@ describe('一级胶囊是账号中心、题库与系统管理', () => {
       'page',
     );
     expect(within(capsule()).getByRole('button', { name: PAGE_META.accounts.label })).not.toHaveAttribute('aria-current');
-    expect(within(capsule()).getByRole('button', { name: SYSTEM_LABEL })).not.toHaveAttribute('aria-current');
   });
 
-  it('点题库直接落到题库页，不走系统管理那套「上次访问」逻辑', () => {
-    const { onNavigate } = renderTopBar('accounts', 'audit');
+  it('点题库直接落到题库页：四枚都是直达，没有任何「上次访问」的推导', () => {
+    const { onNavigate } = renderTopBar();
     fireEvent.click(within(capsule()).getByRole('button', { name: PAGE_META.quiz.label }));
     expect(onNavigate).toHaveBeenCalledWith('quiz');
   });
 
-  it('停在系统管理任一页时，系统管理那颗带 aria-current=page', () => {
-    renderTopBar('audit');
-    expect(within(capsule()).getByRole('button', { name: SYSTEM_LABEL })).toHaveAttribute('aria-current', 'page');
+  it('停在笔记页时只有笔记那颗带 aria-current=page', () => {
+    renderTopBar('notes');
+    expect(within(capsule()).getByRole('button', { name: PAGE_META.notes.label })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
     expect(within(capsule()).getByRole('button', { name: PAGE_META.accounts.label })).not.toHaveAttribute('aria-current');
+    expect(within(capsule()).getByRole('button', { name: PAGE_META.quiz.label })).not.toHaveAttribute('aria-current');
   });
 
-  it('点系统管理回到上次访问的二级页；没有记录时落第一项可用页', () => {
-    const first = renderTopBar('accounts', 'audit');
-    fireEvent.click(within(capsule()).getByRole('button', { name: SYSTEM_LABEL }));
-    expect(first.onNavigate).toHaveBeenCalledWith('audit');
-    first.unmount();
+  it('点笔记直接落到笔记页：笔记和账号中心、题库一样是一级页', () => {
+    const { onNavigate } = renderTopBar();
+    fireEvent.click(within(capsule()).getByRole('button', { name: PAGE_META.notes.label }));
+    expect(onNavigate).toHaveBeenCalledWith('notes');
+  });
 
-    const second = renderTopBar('accounts');
-    fireEvent.click(within(capsule()).getByRole('button', { name: SYSTEM_LABEL }));
-    expect(second.onNavigate).toHaveBeenCalledWith('users');
+  it('只给 notes.read 而没有菜单键时不出入口（菜单节点是第一道门）', () => {
+    renderTopBar('accounts', navFor(new Set([PERM.NOTES_READ])));
+    expect(within(capsule()).queryByText(PAGE_META.notes.label)).toBeNull();
+  });
+
+  it('停在系统管理二级页时胶囊一颗都不亮：它不在顶栏，激活态归齿轮', () => {
+    renderTopBar('audit');
+    for (const b of within(capsule()).getAllByRole('button')) {
+      expect(b).not.toHaveAttribute('aria-current');
+    }
+    expect(screen.getByRole('button', { name: '设置' })).toHaveClass('is-active');
+  });
+
+  it('停在微服务发布页时同样没有一颗胶囊亮着（任务中心只从浮层进）', () => {
+    renderTopBar('release');
+    for (const b of within(capsule()).getAllByRole('button')) {
+      expect(b).not.toHaveAttribute('aria-current');
+    }
   });
 
   it('顶栏没有一级标题：页名回到各页页头，整屏唯一 h1 不该由这里出', () => {
@@ -228,8 +264,8 @@ describe('四颗工具钮各自做的事', () => {
   });
 });
 
-describe('齿轮下拉：四个设置页 + 一个工具页', () => {
-  it('全量权限下六项按「设置页 → 分隔线 → 工具页」排列', () => {
+describe('齿轮下拉：五个设置页 + 一个工具页 + 一枚系统管理', () => {
+  it('全量权限下七项按「设置页 → 分隔线 → 工具页 → 分隔线 → 系统管理一枚」排列', () => {
     renderTopBar();
     const menu = openMenu('设置');
     expect(within(menu).getAllByRole('menuitem').map((el) => el.textContent)).toEqual([
@@ -239,14 +275,18 @@ describe('齿轮下拉：四个设置页 + 一个工具页', () => {
       PAGE_META.update.label,
       PAGE_META.tools.label,
       PAGE_META.launcher.label,
+      '系统管理',
     ]);
-    expect(within(menu).getAllByRole('separator')).toHaveLength(1);
+    expect(within(menu).getAllByRole('separator')).toHaveLength(2);
+    // 五枚二级页平铺在这一处是交付方撤掉的形态：它们只在进去之后的左侧竖排导航里换
+    for (const label of ADMIN_LABELS) {
+      expect(within(menu).queryByRole('menuitem', { name: label })).toBeNull();
+    }
   });
 
   it('按权限裁剪：没有备份/更新权限时只剩安全策略、界面外观与快速启动器', () => {
     renderTopBar(
       'accounts',
-      null,
       navFor(
         new Set([
           PERM.MENU_ACCOUNTS,
@@ -265,7 +305,7 @@ describe('齿轮下拉：四个设置页 + 一个工具页', () => {
       PAGE_META.appearance.label,
       PAGE_META.launcher.label,
     ]);
-    // 两组都还有内容，分隔线保留；少的只是设置页里的备份/更新
+    // 两组都还有内容，分隔线保留；少的只是设置页里的备份/更新，系统管理那一组没权限所以那一枚也不出
     expect(within(menu).getAllByRole('separator')).toHaveLength(1);
   });
 
@@ -273,7 +313,7 @@ describe('齿轮下拉：四个设置页 + 一个工具页', () => {
     const nodes = seedMenuNodes().map((node) =>
       node.id === 'mn-settings-backup' ? { ...node, status: 'disabled' as const } : node,
     );
-    renderTopBar('accounts', null, navFor(FULL_PERMS, nodes));
+    renderTopBar('accounts', navFor(FULL_PERMS, nodes));
     const menu = openMenu('设置');
     expect(within(menu).getAllByRole('menuitem').map((el) => el.textContent)).toEqual([
       PAGE_META.security.label,
@@ -281,13 +321,60 @@ describe('齿轮下拉：四个设置页 + 一个工具页', () => {
       PAGE_META.update.label,
       PAGE_META.tools.label,
       PAGE_META.launcher.label,
+      '系统管理',
     ]);
+  });
+
+  it('系统管理只停用一枚时那一枚仍在；五枚全不可进时那一枚一起消失', () => {
+    const oneOff = seedMenuNodes().map((node) =>
+      node.id === 'mn-system-menus' ? { ...node, status: 'disabled' as const } : node,
+    );
+    const first = renderTopBar('accounts', navFor(FULL_PERMS, oneOff));
+    expect(within(openMenu('设置')).getByRole('menuitem', { name: '系统管理' })).toBeInTheDocument();
+    first.unmount();
+
+    const ids = ['mn-system-users', 'mn-system-roles', 'mn-system-menus', 'mn-system-permissions', 'mn-system-audit'];
+    const allOff = seedMenuNodes().map((node) =>
+      ids.includes(node.id) ? { ...node, status: 'disabled' as const } : node,
+    );
+    renderTopBar('accounts', navFor(FULL_PERMS, allOff));
+    const menu = openMenu('设置');
+    expect(within(menu).queryByRole('menuitem', { name: '系统管理' })).toBeNull();
+    // 第三组空了，第二条分隔线也跟着撤：下拉里不留一条悬空的横线
+    expect(within(menu).getAllByRole('separator')).toHaveLength(1);
+  });
+
+  it('那一枚的名字跟着根节点改：菜单里叫「后台」就上屏「后台」', () => {
+    const renamed = seedMenuNodes().map((node) =>
+      node.id === 'mn-top-system' ? { ...node, label: '后台' } : node,
+    );
+    renderTopBar('accounts', navFor(FULL_PERMS, renamed));
+    expect(within(openMenu('设置')).getByRole('menuitem', { name: '后台' })).toBeInTheDocument();
+  });
+
+  it('点「系统管理」落到上次访问的二级页；没有记录时落第一项可用页', () => {
+    const first = renderTopBar('accounts', navFor(), 'audit');
+    pointerTap(within(openMenu('设置')).getByRole('menuitem', { name: '系统管理' }));
+    expect(first.onNavigate).toHaveBeenCalledWith('audit');
+    first.unmount();
+
+    const second = renderTopBar('accounts', navFor(), null);
+    pointerTap(within(openMenu('设置')).getByRole('menuitem', { name: '系统管理' }));
+    expect(second.onNavigate).toHaveBeenCalledWith('users');
+  });
+
+  it('上次那一页被停用后回到左栏首项，不会停在进不去的页上', () => {
+    const nodes = seedMenuNodes().map((node) =>
+      node.id === 'mn-system-users' ? { ...node, status: 'disabled' as const } : node,
+    );
+    const { onNavigate } = renderTopBar('accounts', navFor(FULL_PERMS, nodes), 'users');
+    pointerTap(within(openMenu('设置')).getByRole('menuitem', { name: '系统管理' }));
+    expect(onNavigate).toHaveBeenCalledWith('roles');
   });
 
   it('快速启动器要菜单与安全策略两枚权限；后一枚缺了就不出入口', () => {
     const first = renderTopBar(
       'accounts',
-      null,
       navFor(new Set([PERM.MENU_QUICK_LAUNCHER, PERM.SYS_SECURITY_CONFIG, permOf('gear.tools')])),
     );
     const menu = openMenu('设置');
@@ -296,7 +383,6 @@ describe('齿轮下拉：四个设置页 + 一个工具页', () => {
 
     renderTopBar(
       'accounts',
-      null,
       navFor(new Set([PERM.MENU_QUICK_LAUNCHER, permOf('gear.tools'), permOf('gear.settings')])),
     );
     const second = openMenu('设置');
@@ -310,13 +396,22 @@ describe('齿轮下拉：四个设置页 + 一个工具页', () => {
     expect(onNavigate).toHaveBeenCalledWith('launcher');
   });
 
-  it('停在任一设置页/工具页时齿轮带激活态，其余页不带', () => {
+  it('停在设置页、工具页或系统管理任一页时齿轮带激活态，一级页不带', () => {
     const gear = renderTopBar('security');
-    const trigger = screen.getByRole('button', { name: '设置' });
-    expect(trigger).toHaveClass('icon-btn', 'is-active');
+    expect(screen.getByRole('button', { name: '设置' })).toHaveClass('icon-btn', 'is-active');
     gear.unmount();
 
+    // 系统管理不再是胶囊，整组的"我在这一组里"只能靠齿轮这颗亮起来表达
+    const admin = renderTopBar('audit');
+    expect(screen.getByRole('button', { name: '设置' })).toHaveClass('is-active');
+    admin.unmount();
+
     renderTopBar('accounts');
+    expect(screen.getByRole('button', { name: '设置' })).not.toHaveClass('is-active');
+  });
+
+  it('停在微服务发布页时齿轮不带激活态：那一页既不在设置组也不在系统管理组', () => {
+    renderTopBar('release');
     expect(screen.getByRole('button', { name: '设置' })).not.toHaveClass('is-active');
   });
 });

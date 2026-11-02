@@ -398,6 +398,23 @@ pub fn match_text(db: &Db, text: &str, scope: Option<&[String]>) -> Result<Vec<M
     Ok(hits)
 }
 
+/// 浮层全局搜索用的关键字检索：同一套 trigram / LIKE 分档规则，但**不做整句相似度打分**。
+///
+/// [`match_text`] 回答的是「屏幕上这段题干是不是库里的某一道题」，所以要打分、要阈值、要 GAP；
+/// 这里回答的是「哪些题里出现了这几个字」，是包含关系，打分反而会因 `DISPLAY_MIN` 把
+/// 「只命中一小截」的题全筛掉。取候选这一段是共用的，所以两处的最短长度、兜底 LIKE 与
+/// 题量上限必然一致，不会出现「浮层搜得到、助手认不出」这种解释不了的分裂。
+pub fn search_keyword(db: &Db, query: &str, limit: usize) -> Result<Vec<MatchHit>> {
+    let normalized = normalize_text(query);
+    // 与 match_text 同一道门槛：1 个字符的结果多到没有意义，也白白扫一遍库。
+    if normalized.chars().count() < 2 {
+        return Ok(Vec::new());
+    }
+    let mut candidates = fetch_candidates(db, &normalized, None)?;
+    candidates.truncate(limit);
+    Ok(candidates.into_iter().map(|c| c.hit).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,6 +464,26 @@ mod tests {
                 question("隔离开关可以带负荷拉合", "错误", &[]),
             ],
         )
+    }
+
+    /// 浮层的关键字检索与整句识别的分工：一段只出现在题干里的小片段，
+    /// `match_text` 会因为分数不够而宁可不答（红线：绝不猜答案），
+    /// 而 `search_keyword` 必须把它带回来——浮层问的是"哪些题里出现了这几个字"。
+    #[test]
+    fn keyword_search_returns_inclusion_hits_that_scoring_would_refuse() {
+        let d = db();
+        let library = seed(&d);
+        // 「隔离开关」是第二道题干里的一小截。整句相似度对它是拒绝的，包含关系对它是成立的。
+        let hits = search_keyword(&d, "隔离开关", 5).unwrap();
+        assert!(!hits.is_empty(), "题干里出现这个词的题必须被带回来");
+        assert!(hits.iter().all(|h| h.library_id == library));
+        assert!(hits.iter().all(|h| h.stem.contains("隔离开关")));
+
+        // 分数不设门槛，但也不虚报：match_text 对同一段词会因为分数不足而空手而归
+        let identified = match_text(&d, "隔离开关", None).unwrap();
+        assert!(!passes_display_gate(&identified, false), "四个字的片段不足以判定是哪道题");
+
+        assert_eq!(search_keyword(&d, "隔", 5).unwrap().len(), 0, "单字不查：与 match_text 同一道门槛");
     }
 
     #[test]

@@ -5,10 +5,12 @@ import {
   PAGE_META,
   PAGE_REQUIRES,
   SETTINGS_ITEMS,
+  TASK_ITEMS,
   UTILITY_ITEMS,
   isAdminPage,
   isGearPage,
   isSettingsPage,
+  isTaskPage,
   type PageKey,
 } from './pageMeta';
 import { PERM } from './permissions';
@@ -20,6 +22,9 @@ import { PERM } from './permissions';
 const PAGES: PageKey[] = [
   'accounts',
   'quiz',
+  'notes',
+  'html',
+  'release',
   'users',
   'roles',
   'menus',
@@ -33,8 +38,8 @@ const PAGES: PageKey[] = [
   'launcher',
 ];
 
-describe('十三个落点与页面文案', () => {
-  it('PAGE_META 的键顺序就是信息架构的顺序（系统管理五页 + 五个设置页 + 一个工具页）', () => {
+describe('十六个落点与页面文案', () => {
+  it('PAGE_META 的键顺序就是信息架构的顺序（任务中心一页 + 系统管理五页 + 五个设置页 + 一个工具页）', () => {
     expect(Object.keys(PAGE_META)).toEqual(PAGES);
   });
 
@@ -65,13 +70,19 @@ describe('十三个落点与页面文案', () => {
   });
 });
 
-describe('权限门槛与图标：十三页一页不缺', () => {
+describe('权限门槛与图标：十六页一页不缺', () => {
   it('PAGE_REQUIRES 覆盖全部落点，空数组只代表「无需额外权限」', () => {
     expect(Object.keys(PAGE_REQUIRES)).toEqual(PAGES);
     expect(PAGE_REQUIRES.appearance).toEqual([]);
     expect(PAGE_REQUIRES.accounts).toEqual([PERM.MENU_ACCOUNTS]);
     // 题库是一级入口：入口键由菜单节点下发，页面本身只要求读题库
     expect(PAGE_REQUIRES.quiz).toEqual([PERM.QUIZ_LIBRARY_READ]);
+    // 笔记同样是一级入口：页面本身只要求读笔记
+    expect(PAGE_REQUIRES.notes).toEqual([PERM.NOTES_READ]);
+    // 页面库也是一级入口：只看预览只需要读，写权限由页内按钮再裁一次
+    expect(PAGE_REQUIRES.html).toEqual([PERM.HTML_PAGE_READ]);
+    // 发布页同理：入口键由菜单节点下发，页面本身只要求读发布信息与历史
+    expect(PAGE_REQUIRES.release).toEqual([PERM.TASK_RELEASE_VIEW]);
     expect(PAGE_REQUIRES.launcher).toEqual([PERM.MENU_QUICK_LAUNCHER, PERM.SYS_SECURITY_CONFIG]);
     // 外部工具页的四条写命令都要 system.security.config，入口不给这枚权限就是满屏 FORBIDDEN
     expect(PAGE_REQUIRES.tools).toEqual([PERM.SYS_SECURITY_CONFIG]);
@@ -82,17 +93,19 @@ describe('权限门槛与图标：十三页一页不缺', () => {
     for (const key of PAGES) expect(PAGE_ICONS[key], `${key} 缺图标`).toBeTruthy();
   });
 
-  it('三张导航表各自的门槛就是 PAGE_REQUIRES 那一行，不手抄第二份', () => {
-    for (const item of [...ADMIN_ITEMS, ...SETTINGS_ITEMS, ...UTILITY_ITEMS]) {
+  it('四张导航表各自的门槛就是 PAGE_REQUIRES 那一行，不手抄第二份', () => {
+    for (const item of [...TASK_ITEMS, ...ADMIN_ITEMS, ...SETTINGS_ITEMS, ...UTILITY_ITEMS]) {
       expect(item.requires, item.key).toEqual(PAGE_REQUIRES[item.key]);
       expect(item.icon, item.key).toBe(PAGE_ICONS[item.key]);
       expect(item.label).toBe(PAGE_META[item.key].label);
     }
   });
 
-  it('三张表合起来正好覆盖除账号中心与题库外的十一页，且没有重复', () => {
-    const keys = [...ADMIN_ITEMS, ...SETTINGS_ITEMS, ...UTILITY_ITEMS].map((item) => item.key);
-    expect(keys).toEqual(PAGES.filter((page) => page !== 'accounts' && page !== 'quiz'));
+  it('四张表合起来正好覆盖除账号中心、题库、笔记与页面库外的十二页，且没有重复', () => {
+    const keys = [...TASK_ITEMS, ...ADMIN_ITEMS, ...SETTINGS_ITEMS, ...UTILITY_ITEMS].map((item) => item.key);
+    expect(keys).toEqual(
+      PAGES.filter((page) => page !== 'accounts' && page !== 'quiz' && page !== 'notes' && page !== 'html'),
+    );
     expect(new Set(keys).size).toBe(keys.length);
   });
 
@@ -102,6 +115,24 @@ describe('权限门槛与图标：十三页一页不缺', () => {
     expect(PAGE_META.tools.desc).toContain('留空即用系统默认');
     expect(PAGE_META.tools.desc).toContain('本机所有使用者');
     expect(PAGE_META.tools.desc).toContain('回退系统默认');
+  });
+
+  /** 笔记页的说明只讲做得到的事：本机保险库、解锁门槛、两种导出格式。 */
+  it('笔记页写明按使用者隔离、解锁后才能读写与两种导出格式', () => {
+    expect(PAGE_META.notes.label).toBe('笔记');
+    expect(PAGE_META.notes.desc).toContain('按使用者隔离');
+    expect(PAGE_META.notes.desc).toContain('解锁后才能读写');
+    expect(PAGE_META.notes.desc).toContain('Markdown');
+    expect(PAGE_META.notes.desc).toContain('zip 备份');
+  });
+
+  /** 页面库的说明跟着实现走：右栏直接可用（脚本会跑），隔离依据是拿不到命令而不是"不执行脚本"。 */
+  it('页面库写明右栏直接可用、页面拿不到本应用任何命令，并保留运行脚本入口', () => {
+    expect(PAGE_META.html.label).toBe('页面库');
+    expect(PAGE_META.html.desc).toContain('右侧直接可用');
+    expect(PAGE_META.html.desc).toContain('拿不到本应用的任何命令');
+    expect(PAGE_META.html.desc).toContain('运行脚本');
+    expect(PAGE_META.html.desc).not.toContain('脚本不执行');
   });
 });
 
@@ -124,9 +155,19 @@ describe('页面归属判定', () => {
     }
     expect(isAdminPage('accounts')).toBe(false);
     expect(isGearPage('accounts')).toBe(false);
+    // 微服务发布归任务中心左栏，不进系统管理也不进齿轮
+    expect(isTaskPage('release')).toBe(true);
+    expect(isAdminPage('release')).toBe(false);
+    expect(isSettingsPage('release')).toBe(false);
+    expect(isGearPage('release')).toBe(false);
     // 题库与账号中心同级：既不进系统管理左栏，也不进齿轮两组
     expect(isAdminPage('quiz')).toBe(false);
     expect(isSettingsPage('quiz')).toBe(false);
     expect(isGearPage('quiz')).toBe(false);
+    // 笔记与题库同构：一级页，不落在任何左栏或齿轮分组里
+    expect(isAdminPage('notes')).toBe(false);
+    expect(isTaskPage('notes')).toBe(false);
+    expect(isSettingsPage('notes')).toBe(false);
+    expect(isGearPage('notes')).toBe(false);
   });
 });

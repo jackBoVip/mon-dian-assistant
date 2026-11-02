@@ -7,8 +7,10 @@ import {
   PAGE_ICONS,
   PAGE_REQUIRES,
   isAdminPage,
+  isTaskPage,
   type AdminPageKey,
   type PageKey,
+  type TaskPageKey,
   type TopKey,
 } from './pageMeta';
 import type { IconName } from '../components/ui/icons';
@@ -33,9 +35,21 @@ export interface TopNavEntry {
   label: string;
 }
 
+/** 齿轮下拉里那一枚分组入口（今天只有「系统管理」）：名字跟 menu_nodes 的根节点走。 */
+export interface NavGroupEntry {
+  id: string;
+  label: string;
+}
+
 export interface NavTree {
   top: TopNavEntry[];
   admin: NavEntry[];
+  /**
+   * 齿轮里那一枚「系统管理」。父级节点停用、或一项二级页都不可进时是 null——
+   * 后者是"点进去是一屏空白"的那条红线（交付方 2026-11-02：五枚收成这一枚）。
+   */
+  adminEntry: NavGroupEntry | null;
+  tasks: NavEntry[];
   settings: NavEntry[];
   utilities: NavEntry[];
   reachable: ReadonlySet<PageKey>;
@@ -43,6 +57,10 @@ export interface NavTree {
 
 const ROOT_ACCOUNTS = 'top.accounts';
 const ROOT_QUIZ = 'top.quiz';
+const ROOT_NOTES = 'top.notes';
+/** 一级「工具」= 页面库。别与齿轮里的 ROOT_TOOLS（外部工具页）混名。 */
+const ROOT_HTML = 'top.tools';
+const ROOT_TASKS = 'top.tasks';
 const ROOT_SYSTEM = 'top.system';
 const ROOT_SETTINGS = 'gear.settings';
 const ROOT_TOOLS = 'gear.tools';
@@ -72,8 +90,11 @@ export function buildNav(
 
   const pageEntry = (node: MenuNode): NavEntry | null => {
     if (node.status !== 'active' || node.kind !== 'page' || !node.pageKey) return null;
-    if (!has(perms, node.permKey)) return null;
     const page = node.pageKey;
+    // 菜单表可能比界面新（节点已种下、这一页还没接）：未知落点按无入口处理，
+    // 不能让整棵导航因此抛错，更不能凭一个没登记的名字渲染出空白页。
+    if (!(page in PAGE_REQUIRES)) return null;
+    if (!has(perms, node.permKey)) return null;
     if (!allows(perms, PAGE_REQUIRES[page])) return null;
     return {
       id: node.id,
@@ -103,12 +124,34 @@ export function buildNav(
     has(perms, quizRoot.permKey) &&
     allows(perms, PAGE_REQUIRES.quiz);
 
+  const notesRoot = rootOf(ROOT_NOTES);
+  const notesVisible =
+    notesRoot !== null &&
+    notesRoot.pageKey === 'notes' &&
+    has(perms, notesRoot.permKey) &&
+    allows(perms, PAGE_REQUIRES.notes);
+
+  const htmlRoot = rootOf(ROOT_HTML);
+  const htmlVisible =
+    htmlRoot !== null &&
+    htmlRoot.pageKey === 'html' &&
+    has(perms, htmlRoot.permKey) &&
+    allows(perms, PAGE_REQUIRES.html);
+
   const systemRoot = rootOf(ROOT_SYSTEM);
   const systemVisible = systemRoot !== null && has(perms, systemRoot.permKey);
   // 二级入口各有自己的菜单键；父级不可见时整棵子树都不出现。
   const admin = systemVisible
     ? entriesOf(childrenOf(systemRoot), (page) => isAdminPage(page))
     : [];
+  // 齿轮里那一枚「系统管理」：一组里没有一枚二级页可进时整枚不出（点进去是空壳）。
+  const adminEntry =
+    systemRoot !== null && admin.length > 0 ? { id: systemRoot.id, label: systemRoot.label } : null;
+
+  const tasksRoot = rootOf(ROOT_TASKS);
+  const tasksVisible = tasksRoot !== null && has(perms, tasksRoot.permKey);
+  // 「任务中心」与系统管理同构：父级不可见或一项子页都不可进时整组不出现。
+  const tasks = tasksVisible ? entriesOf(childrenOf(tasksRoot), (page) => isTaskPage(page)) : [];
 
   const settingsRoot = rootOf(ROOT_SETTINGS);
   const settings =
@@ -123,31 +166,32 @@ export function buildNav(
       : [];
 
   const top: TopNavEntry[] = [];
+  // 顶栏只留四枚一级页胶囊（交付方 2026-11-02）：
+  // - 系统管理的二级页并进右上角齿轮那一组；
+  // - 任务中心从顶栏隐藏，页面仍由快速启动浮层的落点进入（`nav.tasks` 照旧推导，
+  //   权限与启停判定一分不动，撤掉的只是入口）。
+  const capsule = new Map<string, TopKey | null>([
+    [ROOT_ACCOUNTS, accountsVisible ? 'accounts' : null],
+    [ROOT_QUIZ, quizVisible ? 'quiz' : null],
+    [ROOT_NOTES, notesVisible ? 'notes' : null],
+    [ROOT_HTML, htmlVisible ? 'html' : null],
+  ]);
   const roots = sortNodes(
-    nodes.filter(
-      (node) =>
-        !node.parentId &&
-        (node.nodeKey === ROOT_ACCOUNTS || node.nodeKey === ROOT_QUIZ || node.nodeKey === ROOT_SYSTEM),
-    ),
+    nodes.filter((node) => !node.parentId && capsule.has(node.nodeKey)),
   );
   for (const root of roots) {
-    if (root.nodeKey === ROOT_ACCOUNTS && accountsVisible) {
-      top.push({ id: root.id, key: 'accounts', label: root.label });
-    }
-    if (root.nodeKey === ROOT_QUIZ && quizVisible) {
-      top.push({ id: root.id, key: 'quiz', label: root.label });
-    }
-    if (root.nodeKey === ROOT_SYSTEM && systemVisible && admin.length > 0) {
-      top.push({ id: root.id, key: 'system', label: root.label });
-    }
+    const key = capsule.get(root.nodeKey) ?? null;
+    if (key) top.push({ id: root.id, key, label: root.label });
   }
 
   const reachable = new Set<PageKey>();
   if (accountsVisible) reachable.add('accounts');
   if (quizVisible) reachable.add('quiz');
-  for (const entry of [...admin, ...settings, ...utilities]) reachable.add(entry.page);
+  if (notesVisible) reachable.add('notes');
+  if (htmlVisible) reachable.add('html');
+  for (const entry of [...tasks, ...admin, ...settings, ...utilities]) reachable.add(entry.page);
 
-  return { top, admin, settings, utilities, reachable };
+  return { top, admin, adminEntry, tasks, settings, utilities, reachable };
 }
 
 /**
@@ -173,18 +217,36 @@ export function disableWouldLockOutMenusPage(nodes: MenuNode[], id: string): boo
   return !nodes.some(pathAlive);
 }
 
-/** 当前页不可达时的兜底：账号中心 → 题库 → 系统管理首项 → 设置页首项 → 工具页首项。 */
+/**
+ * 当前页不可达时的兜底：一级页按胶囊顺序（账号中心 → 题库 → 笔记 → 工具）先挑，
+ * 再退到分组首项（任务中心 → 系统管理 → 设置 → 快捷入口）。
+ */
 export function firstReachablePage(nav: NavTree): PageKey | null {
   if (nav.reachable.has('accounts')) return 'accounts';
   if (nav.reachable.has('quiz')) return 'quiz';
-  return nav.admin[0]?.page ?? nav.settings[0]?.page ?? nav.utilities[0]?.page ?? null;
+  if (nav.reachable.has('notes')) return 'notes';
+  if (nav.reachable.has('html')) return 'html';
+  return nav.tasks[0]?.page ?? nav.admin[0]?.page ?? nav.settings[0]?.page ?? nav.utilities[0]?.page ?? null;
 }
 
-/** 点「系统管理」的落点：上次访问的二级页仍可达就回去，否则取左栏首项。 */
+/**
+ * 点齿轮里那一枚「系统管理」的落点：上次访问的二级页仍可达就回去，否则取左栏首项。
+ * 五枚二级页收成这一枚（交付方 2026-11-02），换页靠进去之后左侧那条竖排导航，
+ * 所以"上一次看的是哪一页"必须由这里带，不能让每次点都跳回第一项。
+ */
 export function resolveAdminLanding(nav: NavTree, last: AdminPageKey | null): AdminPageKey | null {
   if (last && nav.admin.some((entry) => entry.page === last)) return last;
   const first = nav.admin.find((entry) => isAdminPage(entry.page));
   return first ? (first.page as AdminPageKey) : null;
+}
+
+/**
+ * 快速启动浮层跳「任务中心」时的落点：取左栏首项。
+ * 今天只有「微服务发布」一枚，不记"上次那一页"——只有一页时那份状态永远是首项。
+ */
+export function resolveTasksLanding(nav: NavTree): TaskPageKey | null {
+  const first = nav.tasks.find((entry) => isTaskPage(entry.page));
+  return first ? (first.page as TaskPageKey) : null;
 }
 
 export function useMenuNodes() {

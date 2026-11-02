@@ -478,7 +478,7 @@ export interface UpdateItemPatch {
 
 // —— launcher 命令 ——
 
-/** QuickAction 枚举线格式：snake_case（quick_action 的 action 参数、QuickResult.actions） */
+/** QuickAction 枚举线格式：snake_case（quick_action 的 action 参数、AccountHit.actions） */
 export type QuickAction =
   | 'open_target'
   | 'open_and_fill'
@@ -488,8 +488,18 @@ export type QuickAction =
   | 'select_other_account'
   | 'set_default'
 
-/** quick_launcher::query::QuickResult */
-export interface QuickResult {
+/** quick_launcher::query::QuickSource —— 这一行来自哪一类内容，也是 quick_reveal 的分派键 */
+export type QuickSource = 'account' | 'note' | 'quiz' | 'tool' | 'task'
+
+/** quick_launcher::search::MatchKind —— 完全匹配 > 前缀匹配 > 包含匹配 */
+export type MatchKind = 'exact' | 'prefix' | 'contains'
+
+/**
+ * quick_launcher::query::AccountHit —— 保险库凭据。
+ * 字段与扩展前那条 QuickResult 逐一对应，一个没减：quick_action 读的就是这些键。
+ */
+export interface AccountHit {
+  source: 'account'
   targetId: string
   itemId: string
   systemName: string
@@ -503,15 +513,66 @@ export interface QuickResult {
   favorite: boolean
   credentialCountOnTarget: number
   actions: QuickAction[]
-  matchKind: string
+  matchKind: MatchKind
 }
+
+/** quick_launcher::query::NoteHit —— 笔记：标题 + 摘要。命中正文时摘要锚在命中处。 */
+export interface NoteHit {
+  source: 'note'
+  noteId: string
+  title: string
+  snippet: string
+  updatedAt: string
+  matchKind: MatchKind
+}
+
+/**
+ * quick_launcher::query::QuizHit —— 题库里的一道题。
+ * 落点坐标是 (libraryId, seq)：seq 是题在该库内的序号，题库页用它算出翻到第几页。
+ * 后端刻意不下发答案与选项：浮层是置顶窗，答案不该跟着题干飘在桌面上。
+ */
+export interface QuizHit {
+  source: 'quiz'
+  questionId: string
+  libraryId: string
+  libraryName: string
+  seq: number
+  qtype: string
+  stem: string
+  matchKind: MatchKind
+}
+
+/** quick_launcher::query::ToolHit —— 工具页里的一份 HTML 页面（只有标题参与检索） */
+export interface ToolHit {
+  source: 'tool'
+  pageId: string
+  title: string
+  updatedAt: string
+  matchKind: MatchKind
+}
+
+/** quick_launcher::query::TaskHit —— 任务中心一枚任务定义的一档环境 */
+export interface TaskHit {
+  source: 'task'
+  taskKey: string
+  label: string
+  env: TaskEnv
+  matchKind: MatchKind
+}
+
+export type QuickHit = AccountHit | NoteHit | QuizHit | ToolHit | TaskHit
 
 /** commands::mod::SearchReply（quick_search 返回；syntaxError 是纯字符串说明，无 code/message 结构） */
 export interface SearchReply {
   locked: boolean
-  results: QuickResult[]
+  results: QuickHit[]
   /** 解析失败时只回错误说明，绝不回显查询原文 */
   syntaxError?: string
+  /**
+   * 这次只搜了保险库：查询里带了字段限定（`系统:OA`）或逗号分隔的多条件。
+   * 界面上要把它说出来，否则"输入 系统:OA 之后笔记那一类整体消失"看起来就是坏了。
+   */
+  vaultOnly: boolean
   elapsedMs: number
   indexed: number
 }
@@ -1052,4 +1113,252 @@ export interface QuizAssistantStatus {
   ocr: QuizOcrStatus
   screen: QuizScreenPermissionStatus
   detail: string | null
+}
+
+// —— 笔记（notes）——
+// 唯一事实来源：src-tauri/src/notes/store.rs 的 Serialize 结构（serde camelCase）。
+// 笔记按 created_by 隔离：别人的笔记对当前使用者一律表现为「不存在」，后端不区分两种情况。
+
+/** 列表行：`snippet` 由后端从正文剥标签算出，前端不再解析 HTML。 */
+export interface NoteSummary {
+  id: string
+  title: string
+  snippet: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** 一篇笔记的正文（TipTap 的 HTML）。 */
+export interface NoteRecord {
+  id: string
+  title: string
+  contentHtml: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** 图片素材：字节存在保险库里，出站只有 data URL（CSP 的 img-src 只放 'self' 与 data:）。 */
+export interface NoteAsset {
+  id: string
+  mime: string
+  dataUrl: string
+}
+
+export interface NoteDetail {
+  note: NoteRecord
+  assets: NoteAsset[]
+}
+
+/** notes_import_zip 的摘要：导入是追加，不做覆盖，所以只报进来了多少。 */
+export interface NoteImportResult {
+  notes: number
+  assets: number
+}
+
+// —— 页面库（html_pages）——
+// 唯一事实来源：src-tauri/src/html_pages/store.rs 的 Serialize 结构（serde camelCase）。
+// 与笔记不同，页面库是团队共用的：列表对同一把库里的所有使用者一致，created_by 只作留痕。
+
+/** 列表行：不带正文。`byteLen` 由后端按 UTF-8 字节数算（`length()` 在 SQLite 里是字符数）。 */
+export interface HtmlPageSummary {
+  id: string
+  title: string
+  byteLen: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** 一页的完整内容：正文原样往返，前端不做任何改写。 */
+export interface HtmlPageRecord {
+  id: string
+  title: string
+  html: string
+  byteLen: number
+  createdAt: string
+  updatedAt: string
+}
+
+// —— 任务中心（tasks）——
+// 唯一事实来源：src-tauri/src/tasks/{store.rs,runner.rs,adapters/edas/*} 的 Serialize 结构（serde camelCase）。
+// 这里没有任何凭据字段：环境绑定只带 `credentialItemId` 与别名，口令永远留在保险库一侧。
+
+export type TaskEnv = 'test' | 'prod'
+
+/**
+ * 环境档的中文名。只存这一份：任务中心页的环境开关和浮层里的任务命中都要用它。
+ * 后端只下发 `test`/`prod`（见 `quick_launcher::query::TaskHit` 的说明），
+ * 两处各自抄一份标签就等着漂移。
+ */
+export const TASK_ENV_LABELS: Record<TaskEnv, string> = {
+  test: '测试环境',
+  prod: '生产环境',
+}
+
+/** 任务定义（静态）：并发与环境由后端给，前端不自己数。 */
+export interface TaskDefinition {
+  key: string
+  label: string
+  envs: TaskEnv[]
+  prepareConcurrency: number
+  publishConcurrency: number
+  /** 尝试上限由后端说一句话：界面不许自己抄一份数字。 */
+  maxAttempts: number
+}
+
+export interface TaskProfileView {
+  taskKey: string
+  env: TaskEnv
+  /** 站点形状（域名/region/字段路径/登录选择器）。非密，界面可编辑。 */
+  profileJson: string
+  configured: boolean
+  updatedAt: string | null
+  /** 管理员的「允许不安全协议」此刻是否放开。**不按环境区分**：内蒙电的生产控制台本身就是 http。 */
+  insecureHttpAllowed: boolean
+}
+
+export interface TaskBinding {
+  taskKey: string
+  env: TaskEnv
+  /** 手动覆盖的登录地址；空串表示"跟随这条凭据自己的登录地址"。 */
+  loginUrl: string
+  credentialItemId: string
+  credentialTargetId: string
+  credentialLabel: string | null
+  updatedAt: string
+}
+
+export interface TaskSessionStatus {
+  bound: boolean
+  configured: boolean
+  active: boolean
+  /** 只有 Cookie 名，没有值。 */
+  cookieNames: string[]
+  acquiredSecondsAgo: number | null
+  ttlMinutes: number
+  /** 真正会去打开的登录地址与它的来源：手动覆盖 / 跟随凭据 / 取不到。 */
+  loginUrl: string | null
+  loginUrlSource: 'manual' | 'credential' | 'missing'
+  credentialLabel: string | null
+}
+
+/** `task_probe_login` 的返回：登录走到哪一步的线索（状态名 + 主机名）。 */
+export interface TaskProbeReport {
+  statuses: string[]
+  finalHost: string
+  cookieNames: string[]
+  sawForm: boolean
+  authorizeVisited: boolean
+  loggedIn: boolean
+  apiService: string
+  apiClass: string
+  repoIdFound: boolean
+}
+
+export interface TaskReleaseRow {
+  ordinal: number
+  serviceName: string
+  imageHint: string
+  designatedTag: string | null
+}
+
+export interface TaskParsedNotes {
+  rows: TaskReleaseRow[]
+  appTars: string[]
+  tablesSeen: number
+  headerSeen: boolean
+  truncated: boolean
+}
+
+export type TaskRunStatus =
+  | 'preparing'
+  | 'ready'
+  | 'running'
+  | 'cancelling'
+  | 'succeeded'
+  | 'partial'
+  | 'failed'
+  | 'cancelled'
+
+export type TaskItemStatus =
+  | 'pending'
+  | 'resolving'
+  | 'ready'
+  | 'publishing'
+  | 'waiting'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
+
+export interface TaskRun {
+  id: string
+  taskKey: string
+  env: TaskEnv
+  status: TaskRunStatus
+  cancelRequested: boolean
+  createdBy: string
+}
+
+export interface TaskRunItem {
+  id: string
+  ordinal: number
+  itemKey: string
+  displayName: string | null
+  desiredTag: string | null
+  imageRef: string | null
+  appId: string | null
+  serviceUpdatedAt: string | null
+  tagUpdatedAt: string | null
+  status: TaskItemStatus
+  attempts: number
+  message: string | null
+}
+
+export interface TaskRunDetail {
+  run: TaskRun
+  items: TaskRunItem[]
+}
+
+export interface TaskRunListItem {
+  id: string
+  taskKey: string
+  env: TaskEnv
+  status: TaskRunStatus
+  createdBy: string
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+  cancelRequested: boolean
+  total: number
+  ready: number
+  succeeded: number
+  failed: number
+  skipped: number
+}
+
+export interface TaskLogRow {
+  seq: number
+  ts: string
+  level: 'info' | 'warn' | 'error'
+  itemKey: string | null
+  message: string
+}
+
+/** 引擎广播的运行状态。载荷只带计数与状态，条目明细由 React Query 重取。 */
+export interface TaskRunEvent {
+  runId: string
+  status: TaskRunStatus
+  total: number
+  ready: number
+  succeeded: number
+  failed: number
+  at: number
+}
+
+export interface TaskItemEvent {
+  runId: string
+  itemKey: string
+  status: TaskItemStatus
+  attempts: number
+  message: string | null
+  at: number
 }

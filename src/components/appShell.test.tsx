@@ -63,6 +63,18 @@ vi.mock('../pages/QuizPage', async () => {
   const { createElement } = await import('react');
   return { QuizPage: () => createElement('div', null, 'QUIZ_PAGE') };
 });
+vi.mock('../pages/ReleasePage', async () => {
+  const { createElement } = await import('react');
+  return { ReleasePage: () => createElement('div', null, 'RELEASE_PAGE') };
+});
+vi.mock('../pages/HtmlPagesPage', async () => {
+  const { createElement } = await import('react');
+  return { HtmlPagesPage: () => createElement('div', null, 'HTML_PAGES_PAGE') };
+});
+vi.mock('../pages/NotesPage', async () => {
+  const { createElement } = await import('react');
+  return { NotesPage: () => createElement('div', null, 'NOTES_PAGE') };
+});
 
 const FULL = [...Object.values(PERM), ...seedMenuNodes().map((node) => node.permKey)];
 
@@ -74,6 +86,16 @@ function renderShell() {
     </QueryClientProvider>,
   );
   return { qc, ...view };
+}
+
+/**
+ * 齿轮下拉里点一枚：五个设置页、快速启动器和那一枚「系统管理」都只从这儿进。
+ * Radix 的菜单项要吃真实指针事件，`fireEvent.click` 打不开也点不动（见 test/pointer.ts）。
+ */
+async function pickGearItem(label: string) {
+  pointerTap(await screen.findByRole('button', { name: '设置' }));
+  const menu = await screen.findByRole('menu', { name: '设置' });
+  pointerTap(within(menu).getByRole('menuitem', { name: label }));
 }
 
 beforeEach(() => {
@@ -131,19 +153,19 @@ describe('壳层：菜单树与权限都就绪前不渲染受保护的页', () =
 });
 
 describe('壳层：系统管理的左栏与落点', () => {
-  it('账号中心不带侧栏；点系统管理才出现左栏并落到用户管理', async () => {
+  it('账号中心不带侧栏；从齿轮点那一枚「系统管理」才出现左栏，落点是第一项可用页', async () => {
     renderShell();
     await screen.findByText('ACCOUNTS_PAGE');
     expect(screen.queryByRole('navigation', { name: '系统管理导航' })).toBeNull();
 
-    fireEvent.click(await screen.findByRole('button', { name: '系统管理' }));
+    await pickGearItem('系统管理');
     expect(await screen.findByText('ADMIN_PAGE:users')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '系统管理导航' })).toBeInTheDocument();
   });
 
-  it('在同一组二级页之间切换时侧栏一直在；回到账号中心后再点系统管理，回到上次那一页', async () => {
+  it('在同一组二级页之间切换时侧栏一直在；回到账号中心后再点那一枚，回到上次那一页', async () => {
     renderShell();
-    fireEvent.click(await screen.findByRole('button', { name: '系统管理' }));
+    await pickGearItem('系统管理');
     await screen.findByText('ADMIN_PAGE:users');
 
     fireEvent.click(screen.getByRole('button', { name: PAGE_META.audit.label }));
@@ -152,8 +174,11 @@ describe('壳层：系统管理的左栏与落点', () => {
 
     fireEvent.click(screen.getByRole('button', { name: PAGE_META.accounts.label }));
     expect(await screen.findByText('ACCOUNTS_PAGE')).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: '系统管理导航' })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: '系统管理' }));
+    // 五枚收成齿轮里的一枚之后，"上一次看的是哪一页"是这一枚唯一的落点依据：
+    // 每次都跳回第一项的话，刚翻过审计日志的人再点一次就被踢回用户管理。
+    await pickGearItem('系统管理');
     expect(await screen.findByText('ADMIN_PAGE:audit')).toBeInTheDocument();
   });
 
@@ -163,6 +188,31 @@ describe('壳层：系统管理的左栏与落点', () => {
 
     fireEvent.click(screen.getByRole('button', { name: PAGE_META.quiz.label }));
     expect(await screen.findByText('QUIZ_PAGE')).toBeInTheDocument();
+    expect(screen.queryByText('ACCOUNTS_PAGE')).toBeNull();
+    expect(screen.queryByRole('navigation', { name: '系统管理导航' })).toBeNull();
+  });
+
+  it('任务中心没有顶栏入口：只能靠浮层那条事件进，进后左栏用独立的可及名', async () => {
+    renderShell();
+    await screen.findByText('ACCOUNTS_PAGE');
+    expect(screen.queryByRole('navigation', { name: '任务中心导航' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '任务中心' })).toBeNull();
+
+    act(() => {
+      mocks.events.handler?.({ page: 'tasks', taskKey: 'release', env: 'prod' });
+    });
+    expect(await screen.findByText('RELEASE_PAGE')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: '任务中心导航' })).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: '系统管理导航' })).toBeNull();
+  });
+
+  it('工具是一级页：顶栏胶囊按菜单节点的名字出现，点进去落到页面库', async () => {
+    renderShell();
+    await screen.findByText('ACCOUNTS_PAGE');
+
+    const pill = await screen.findByRole('button', { name: '工具' });
+    fireEvent.click(pill);
+    expect(await screen.findByText('HTML_PAGES_PAGE')).toBeInTheDocument();
     expect(screen.queryByText('ACCOUNTS_PAGE')).toBeNull();
     expect(screen.queryByRole('navigation', { name: '系统管理导航' })).toBeNull();
   });
@@ -186,7 +236,7 @@ describe('壳层：菜单节点即时收放导航', () => {
     );
     mocks.listMenuNodes.mockResolvedValue(nodes);
     renderShell();
-    fireEvent.click(await screen.findByRole('button', { name: '系统管理' }));
+    await pickGearItem('系统管理');
     await screen.findByText('ADMIN_PAGE:users');
 
     const sidebar = screen.getByRole('navigation', { name: '系统管理导航' });
@@ -250,19 +300,48 @@ describe('壳层：权限撤销后的重定向', () => {
 });
 
 describe('壳层：浮层跳到主窗的那条事件', () => {
-  it('订阅 launcher://open-detail，收到后落账号中心并写入待消费的记录', async () => {
+  it('订阅 launcher://open-detail，账号落点仍写回账号中心', async () => {
     renderShell();
-    fireEvent.click(await screen.findByRole('button', { name: '系统管理' }));
+    await pickGearItem('系统管理');
     await screen.findByText('ADMIN_PAGE:users');
     expect(mocks.events.name).toBe('launcher://open-detail');
 
     act(() => {
-      mocks.events.handler?.({ targetId: 't1', itemId: 'i1', keyword: '生产库' });
+      mocks.events.handler?.({ page: 'accounts', targetId: 't1', itemId: 'i1', keyword: '生产库' });
     });
 
     expect(await screen.findByText('ACCOUNTS_PAGE')).toBeInTheDocument();
     await waitFor(() =>
-      expect(useLauncherNav.getState().pending).toEqual({ targetId: 't1', itemId: 'i1', keyword: '生产库' }),
+      expect(useLauncherNav.getState().pending).toEqual({
+        page: 'accounts',
+        targetId: 't1',
+        itemId: 'i1',
+        keyword: '生产库',
+      }),
     );
+  });
+
+  /**
+   * 载荷现在自己说落到哪一页，壳层照它切页。
+   *
+   * 旧写法是收到事件就无条件 `setPage('accounts')`——那时浮层只搜保险库，账号中心是唯一落点。
+   * 现在四类新内容的导航要是也被这一句改成账号中心，报出来是"点了笔记却跳到账号页"，
+   * 而 Rust 侧命令全绿、审计也落了条，从后端看不出任何毛病。所以这一条按落点逐页钉住。
+   */
+  it.each([
+    ['笔记', { page: 'notes', noteId: 'n-9' }, 'NOTES_PAGE'],
+    ['题库', { page: 'quiz', libraryId: 'l-1', questionId: 'q-1', seq: 42 }, 'QUIZ_PAGE'],
+    ['工具', { page: 'html', pageId: 'p-2' }, 'HTML_PAGES_PAGE'],
+    ['任务中心', { page: 'tasks', taskKey: 'release', env: 'prod' }, 'RELEASE_PAGE'],
+  ] as const)('%s 的落点切到它自己那一页', async (_label, payload, marker) => {
+    renderShell();
+    await screen.findByText('ACCOUNTS_PAGE');
+
+    act(() => {
+      mocks.events.handler?.(payload);
+    });
+
+    expect(await screen.findByText(marker)).toBeInTheDocument();
+    await waitFor(() => expect(useLauncherNav.getState().pending).toEqual(payload));
   });
 });

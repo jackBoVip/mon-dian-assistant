@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppearanceSection } from './AppearanceSection';
+import { THEME_TOKEN_NAMES } from '../../lib/themeTokens';
 import { useTheme } from '../../state/theme';
 import { useNotify } from '../../state/notify';
 import type { CustomTheme } from '../../lib/types';
@@ -88,7 +89,8 @@ describe('界面外观 · 粘贴新增主题', () => {
     expect(name).toBe('海盐蓝 2');
     expect(String(id)).toMatch(/^t[a-z0-9]{2,}$/);
     const sent = JSON.parse(String(tokensJson)) as Record<string, string>;
-    expect(Object.keys(sent)).toHaveLength(32);
+    // 枚数拿名单当尺：加一枚令牌时这里不必跟着人改一个数
+    expect(Object.keys(sent)).toHaveLength(THEME_TOKEN_NAMES.length);
     expect(sent['--t-primary']).toBe('#0e6ba8');
     expect(sent['--t-bg']).toBe('#eef4f8');
     // 原文里那些注释、空行、分号都不该被原样带进后端

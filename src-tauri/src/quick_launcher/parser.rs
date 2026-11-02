@@ -303,7 +303,7 @@ pub fn syntax_help() -> Vec<SyntaxHint> {
         },
         SyntaxHint { group: "写法", pattern: "运维，数据库".into(), desc: "逗号或分号即 AND，半角全角都切分" },
         SyntaxHint { group: "写法", pattern: "\"OA,门户\"".into(), desc: "引号内的逗号不作分隔" },
-        SyntaxHint { group: "范围", pattern: Field::Any.label().into(), desc: "未加字段名时匹配上述全部字段与备注" },
+        SyntaxHint { group: "范围", pattern: Field::Any.label().into(), desc: "未加字段名时五类一起搜，并匹配上述全部字段与备注" },
         SyntaxHint {
             group: "范围",
             pattern: "密码 · Token · 私钥 · 口令".into(),
@@ -444,6 +444,17 @@ mod tests {
             let token = format!("{name}:");
             assert!(rows.iter().any(|p| p.contains(&token)), "字段两行里都没有 {token}");
         }
+    }
+
+    /// 范围那一行要说清"不加字段名时搜的是哪几类"。
+    /// 语法块只在空输入时显示，而这套字段语法现在只作用于保险库——
+    /// 这一行还写成"匹配上述全部字段"，教出去的就是"加了字段名也是五类一起搜"，
+    /// 用户第一次输入 `系统:OA` 发现笔记那一类整块消失，只会以为搜索坏了。
+    #[test]
+    fn scope_row_names_the_five_classes() {
+        let scope = syntax_help().into_iter().find(|h| h.group == "范围" && h.pattern == Field::Any.label());
+        let row = scope.expect("范围组里必须有『关键词』这一行");
+        assert!(row.desc.contains("五类"), "范围那一行没交代清搜索覆盖面：{}", row.desc);
     }
 
     /// 反向：两行合起来必须覆盖全部可显式限定的字段，不能悄悄少教一个；

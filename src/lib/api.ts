@@ -25,6 +25,8 @@ import type {
   ExtensionHostStatus,
   ExtensionHostUninstallResult,
   GroupRow,
+  HtmlPageRecord,
+  HtmlPageSummary,
   ImportCommitResult,
   ImportPreview,
   ImportTemplate,
@@ -36,10 +38,16 @@ import type {
   LauncherShortcutStatus,
   LoginProfile,
   MenuNode,
+  NoteAsset,
+  NoteDetail,
+  NoteImportResult,
+  NoteRecord,
+  NoteSummary,
   PasswordAssessment,
   PagedTargets,
   PermissionRow,
   QuickAction,
+  QuickSource,
   RecentAccessRow,
   RevealedSecret,
   RoleAdminSummary,
@@ -47,6 +55,17 @@ import type {
   SearchReply,
   SecretField,
   SecurityStatus,
+  TaskBinding,
+  TaskDefinition,
+  TaskEnv,
+  TaskLogRow,
+  TaskParsedNotes,
+  TaskProbeReport,
+  TaskProfileView,
+  TaskRun,
+  TaskRunDetail,
+  TaskRunListItem,
+  TaskSessionStatus,
   SettingTuple,
   SystemInfo,
   TargetDetail,
@@ -227,6 +246,13 @@ export const api = {
   quickSearch: (query: string) => call<SearchReply>('quick_search', { query }),
   quickAction: (action: QuickAction, itemId: string, targetId: string, credentialId?: string) =>
     call<ActionReply>('quick_action', { action, itemId, targetId, credentialId }),
+  /**
+   * 浮层里非账号那四类的 Enter：把这一条落到主窗对应页面。
+   * 只交回来源与一个 id——题在哪份库、第几序号由后端现查，权限也在那一侧重判一遍。
+   * 账号那一类不在这里，它的动作集仍走 `quickAction`。
+   */
+  quickReveal: (source: QuickSource, id: string, env?: TaskEnv) =>
+    call<ActionReply>('quick_reveal', { source, id, env: env ?? null }),
   launcherVisibility: (visible: boolean) => call<void>('launcher_visibility', { visible }),
   launcherPreferences: () => call<LauncherPreferences>('launcher_preferences'),
   setLauncherShortcut: (accelerator: string) => call<LauncherShortcutStatus>('set_launcher_shortcut', { accelerator }),
@@ -324,6 +350,89 @@ export const api = {
     call<QuizAssistantPreferences>('quiz_assistant_set_preferences', { input }),
   quizAssistantStart: () => call<QuizAssistantStatus>('quiz_assistant_start'),
   quizAssistantStop: () => call<QuizAssistantStatus>('quiz_assistant_stop'),
+
+  // —— 笔记 ——
+  // 读只需 notes.read；新建/改/删/插图/导入要 notes.write。
+  // 自动保存走 notes_update，后端刻意不写审计——写进台账会被自己的保存动作淹掉。
+  notesList: (q?: string | null) => call<NoteSummary[]>('notes_list', { q: q ?? null }),
+  /** 一次带回正文与该笔记的全部素材 data URL，编辑器渲染图片不再逐张发 IPC。 */
+  notesGet: (id: string) => call<NoteDetail>('notes_get', { id }),
+  notesCreate: () => call<NoteDetail>('notes_create'),
+  notesUpdate: (id: string, title: string, html: string) =>
+    call<NoteRecord>('notes_update', { id, title, html }),
+  notesDelete: (id: string) => call<void>('notes_delete', { id }),
+  /** 图片类型由后端按魔数嗅探，前端传的扩展名与 mime 都不作数。 */
+  noteUploadAssetFromPath: (noteId: string, path: string) =>
+    call<NoteAsset>('note_upload_asset_from_path', { noteId, path }),
+  /** 剪贴板粘贴：base64 可以是裸串，也可以是 `data:image/…;base64,` 整条 data URL。 */
+  noteUploadAssetBytes: (noteId: string, dataB64: string) =>
+    call<NoteAsset>('note_upload_asset_bytes', { noteId, dataB64 }),
+  notesReadTextFile: (path: string) => call<string>('notes_read_text_file', { path }),
+  notesExportMarkdown: (path: string, markdown: string) =>
+    call<void>('notes_export_markdown', { path, markdown }),
+  /** 只导当前使用者自己的笔记；换账号导不到别人的内容。 */
+  notesExportZip: (path: string) => call<void>('notes_export_zip', { path }),
+  notesImportZip: (path: string) => call<NoteImportResult>('notes_import_zip', { path }),
+
+  // —— 页面库 ——
+  // 读与预览走 html.page.read；新建/改/删各要一枚写权限。
+  // 预览地址由后端拼：回环端口与令牌只存在于 Rust 侧，前端拿到的是一条完整 URL。
+  htmlPageList: () => call<HtmlPageSummary[]>('html_page_list'),
+  htmlPageGet: (id: string) => call<HtmlPageRecord>('html_page_get', { id }),
+  htmlPageCreate: (title: string, html: string) => call<HtmlPageRecord>('html_page_create', { title, html }),
+  htmlPageUpdate: (id: string, title: string, html: string) =>
+    call<HtmlPageRecord>('html_page_update', { id, title, html }),
+  htmlPageDelete: (id: string) => call<void>('html_page_delete', { id }),
+  htmlPagePreviewUrl: (id: string) => call<string>('html_page_preview_url', { id }),
+  /** 在独立无 capability 的窗口里打开：脚本可执行、可联网，但调不到本应用任何命令。 */
+  htmlPagePreviewOpen: (id: string) => call<void>('html_page_preview_open', { id }),
+  /**
+   * 右栏嵌入块：位置尺寸是占位块的 CSS 像素（= 逻辑像素），原生层不猜布局。
+   * 内容同样来自回环服务，是 remote origin；跑得了脚本，但拿不到本应用任何命令。
+   */
+  // version 传选中页的 updatedAt：同版本重放（窗口重新获得焦点）只摆位置，不重新加载。
+  htmlPageEmbedOpen: (id: string, version: string, x: number, y: number, width: number, height: number) =>
+    call<void>('html_page_embed_open', { id, version, x, y, width, height }),
+  htmlPageEmbedSync: (x: number, y: number, width: number, height: number) =>
+    call<void>('html_page_embed_sync', { x, y, width, height }),
+  htmlPageEmbedVisible: (visible: boolean) => call<void>('html_page_embed_visible', { visible }),
+  htmlPageEmbedClose: () => call<void>('html_page_embed_close'),
+
+  // —— 任务中心 ——
+  // 看走 task.release.view；配置环境走 task.release.configure；
+  // 发测试要 task.release.run，发生产另要 task.release.run_prod（后端按**运行自己记的环境**判，
+  // 不看前端传来的环境串），所以这里的参数只是"要哪一档"，权限判定全在 Rust 侧。
+  taskDefinitions: () => call<TaskDefinition[]>('task_definitions'),
+  taskProfileGet: (taskKey: string, env: TaskEnv) => call<TaskProfileView>('task_profile_get', { taskKey, env }),
+  /** 存前就在后端解析并校验过一遍：返回的是被规整后的那份 JSON，界面直接用它刷新显示。 */
+  taskProfileUpdate: (taskKey: string, env: TaskEnv, profileJson: string) =>
+    call<TaskProfileView>('task_profile_update', { taskKey, env, profileJson }),
+  taskBindingGet: (taskKey: string, env: TaskEnv) => call<TaskBinding | null>('task_binding_get', { taskKey, env }),
+  /** 只绑保险库里的凭据 id：这条链路上没有任何口令出入口。 */
+  taskBindingUpdate: (taskKey: string, env: TaskEnv, loginUrl: string, credentialItemId: string) =>
+    call<TaskBinding>('task_binding_update', { taskKey, env, loginUrl, credentialItemId }),
+  taskBindingDelete: (taskKey: string, env: TaskEnv) => call<void>('task_binding_delete', { taskKey, env }),
+  taskSessionStatus: (taskKey: string, env: TaskEnv) => call<TaskSessionStatus>('task_session_status', { taskKey, env }),
+  /** 隐藏 WebView 静默登录：用户不打开浏览器、不做任何操作。force=true 是"会话失效，重来一次"。 */
+  taskSessionLogin: (taskKey: string, env: TaskEnv, force: boolean) =>
+    call<TaskSessionStatus>('task_session_login', { taskKey, env, force }),
+  /** 现场取证：登录走到哪一步、拿到哪几枚 Cookie 名、接口那一发是什么分类。没有值。 */
+  taskProbeLogin: (taskKey: string, env: TaskEnv, probeService?: string | null) =>
+    call<TaskProbeReport>('task_probe_login', { taskKey, env, probeService: probeService ?? null }),
+  /** 读发布说明（.docx）：只把表格变成待发行，不碰线上。 */
+  taskReleaseParse: (path: string) => call<TaskParsedNotes>('task_release_parse', { path }),
+  taskRunCreate: (taskKey: string, env: TaskEnv, items: { itemKey: string; displayName?: string | null; desiredTag?: string | null }[]) =>
+    call<TaskRun>('task_run_create', { taskKey, env, items }),
+  taskRunPrepare: (runId: string) => call<TaskRun>('task_run_prepare', { runId }),
+  taskRunPublish: (runId: string) => call<TaskRun>('task_run_publish', { runId }),
+  taskRunCancel: (runId: string) => call<TaskRun>('task_run_cancel', { runId }),
+  /** 重试只把失败项放回待读取；发布仍然是人的那一下。 */
+  taskRunRetry: (runId: string) => call<TaskRun>('task_run_retry', { runId }),
+  taskRunGet: (runId: string) => call<TaskRunDetail>('task_run_get', { runId }),
+  taskRunList: (taskKey: string, env: TaskEnv, limit?: number) =>
+    call<TaskRunListItem[]>('task_run_list', { taskKey, env, limit: limit ?? null }),
+  taskRunLogs: (runId: string, afterSeq?: number, limit?: number) =>
+    call<TaskLogRow[]>('task_run_logs', { runId, afterSeq: afterSeq ?? null, limit: limit ?? null }),
 };
 
 export { isTauri };

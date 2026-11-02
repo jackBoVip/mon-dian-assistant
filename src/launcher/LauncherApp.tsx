@@ -1,13 +1,21 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import type { LauncherPreferences, LauncherSyntaxHint, QuickAction, QuickResult } from '../lib/types';
+import type {
+  AccountHit,
+  LauncherPreferences,
+  LauncherSyntaxHint,
+  QuickAction,
+  QuickHit,
+  QuickSource,
+} from '../lib/types';
 import { queryKeys } from '../lib/queryClient';
 import { quickSearchOptions } from '../lib/queryOptions';
-import { targetTypeLabel } from '../lib/types';
+import { targetTypeLabel, TASK_ENV_LABELS } from '../lib/types';
 import { parseConditions, formatCondition } from '../lib/query';
 import { displayMaskedUsername } from '../lib/mask';
-import { formatElapsed } from '../lib/format';
+import { formatElapsed, formatTimestamp } from '../lib/format';
+import { qtypeLabel } from '../lib/quiz';
 import { useBackendEvent, useVaultLocked } from '../lib/vaultEvents';
 import { toNormalisedError } from '../lib/errors';
 import { useTheme } from '../state/theme';
@@ -24,6 +32,68 @@ const ACTION_LABELS: Record<QuickAction, string> = {
 };
 
 /**
+ * 来源徽标：一行结果属于哪一类。账号/笔记/题库/工具四个名字必须是那一页在顶栏胶囊上的原话，
+ * 浮层里叫「工具」而顶栏胶囊叫「页面库」这种，人就找不着落点了。
+ * 「任务」是唯一的例外：任务中心在顶栏没有胶囊（2026-11-02 交付方要求隐藏），
+ * 浮层这一行是它对外唯一的说法，落点由 AppShell 现算。
+ */
+const SOURCE_LABELS: Record<QuickSource, string> = {
+  account: '账号',
+  note: '笔记',
+  quiz: '题库',
+  tool: '工具',
+  task: '任务',
+};
+
+/** 列表 key：跨五类都要唯一。账号那条仍是原来的 目标-凭据 复合键。 */
+function hitKey(h: QuickHit): string {
+  switch (h.source) {
+    case 'account':
+      return `account-${h.targetId}-${h.itemId}`;
+    case 'note':
+      return `note-${h.noteId}`;
+    case 'quiz':
+      return `quiz-${h.questionId}`;
+    case 'tool':
+      return `tool-${h.pageId}`;
+    case 'task':
+      return `task-${h.taskKey}-${h.env}`;
+  }
+}
+
+/** 名称行。每类取它在该页面上被当作"名字"的那一列。 */
+function rowTitle(h: QuickHit): string {
+  switch (h.source) {
+    case 'account':
+      return h.systemName;
+    case 'note':
+    case 'tool':
+      return h.title;
+    case 'quiz':
+      return h.stem;
+    case 'task':
+      return h.label;
+  }
+}
+
+/**
+ * 非账号那四类的 Enter 说法：一句一个，且必须是 `quick_reveal` 真做到的那件事。
+ * 「打开这篇笔记」能兑现（笔记页会选中它）；写「打开笔记」就变成了一句没有落点的空话。
+ */
+function revealHint(h: Exclude<QuickHit, AccountHit>): string {
+  switch (h.source) {
+    case 'note':
+      return '打开这篇笔记';
+    case 'quiz':
+      return '在题库里翻到这道题';
+    case 'tool':
+      return '在工具页选中这一页';
+    case 'task':
+      return `切到${TASK_ENV_LABELS[h.env]}那一档`;
+  }
+}
+
+/**
  * 浮层不渲染的动作（交付方 2026-10-21：取消「选择其他账号」那颗钮）。
  * 后端在多账号目标下会下发 select_other_account，但它对应的回执只有一句
  * "请选择要使用的账号"——浮层里没有账号列表可挑，这颗钮兑不出承诺。
@@ -32,7 +102,7 @@ const ACTION_LABELS: Record<QuickAction, string> = {
 const HIDDEN_ACTIONS: ReadonlySet<QuickAction> = new Set(['select_other_account']);
 
 /** 浮层里真正可执行的动作：顺序沿用后端，只摘掉不渲染的那几条。 */
-function visibleActions(r: QuickResult): QuickAction[] {
+function visibleActions(r: AccountHit): QuickAction[] {
   return r.actions.filter((a) => !HIDDEN_ACTIONS.has(a));
 }
 
@@ -41,7 +111,7 @@ function visibleActions(r: QuickResult): QuickAction[] {
  * 兜底那一条是硬约束：主操作绝不落在「复制密码」上（需求 §304/§605——Enter 不得意外复制密码），
  * 即便后端给出的动作顺序把 copy_password 放在第一位也不能改变这一点。
  */
-function primaryAction(r: QuickResult): QuickAction | null {
+function primaryAction(r: AccountHit): QuickAction | null {
   const actions = visibleActions(r);
   if (actions.includes('open_and_fill')) return 'open_and_fill';
   if (actions.includes('open_target')) return 'open_target';
@@ -51,9 +121,12 @@ function primaryAction(r: QuickResult): QuickAction | null {
 /**
  * 一行里可用动作的键盘顺序：0 号一定是主操作（Enter 的默认动作），其余按后端给出的顺序跟随。
  * Tab/Shift+Tab 就在这个数组上前后循环（需求 line 261：Tab 或快捷菜单切换可用操作）。
+ *
+ * 只有保险库那一条有动作集：另外四类没有"多枚动作"这回事，Enter 就是打开它，
+ * 给它们摆一颗「查看详情」的钮反而是空头承诺——那一页里没有"详情"这一层。
  */
-function actionOrder(r: QuickResult | undefined): QuickAction[] {
-  if (!r) return [];
+function actionOrder(r: QuickHit | undefined): QuickAction[] {
+  if (!r || r.source !== 'account') return [];
   const actions = visibleActions(r);
   const pa = primaryAction(r);
   if (!pa) return [];
@@ -135,19 +208,41 @@ export function LauncherApp() {
     if (active >= results.length) setActive(Math.max(0, results.length - 1));
   }, [results.length, active]);
 
-  // 换行、或结果集刷新导致当前行换成另一条凭据时，动作选择退回主操作。
+  // 换行、或结果集刷新导致当前行换成另一条时，动作选择退回主操作。
   // 不退回的话：上一次 Tab 停在「复制密码」，换行后直接按 Enter 就把密码复制了。
+  const activeKey = activeRow ? hitKey(activeRow) : null;
   useEffect(() => {
     setActionIndex(0);
-  }, [active, activeRow?.itemId]);
+  }, [active, activeKey]);
 
-  async function runAction(action: QuickAction, r: QuickResult) {
+  async function runAction(action: QuickAction, r: AccountHit) {
     try {
       const res = await api.quickAction(action, r.itemId, r.targetId, r.isDefault ? r.itemId : undefined);
       setReply(res.message); // 原样回显，包括降级说明
     } catch (raw) {
       setReply(toNormalisedError(raw).message);
     }
+  }
+
+  /** 非账号那四类的 Enter：只交回来源与这一条的 id，落点坐标与权限由后端现判现查。 */
+  async function runReveal(r: Exclude<QuickHit, AccountHit>) {
+    const id = r.source === 'note' ? r.noteId : r.source === 'quiz' ? r.questionId : r.source === 'tool' ? r.pageId : r.taskKey;
+    try {
+      const res = await api.quickReveal(r.source, id, r.source === 'task' ? r.env : undefined);
+      setReply(res.message);
+    } catch (raw) {
+      setReply(toNormalisedError(raw).message);
+    }
+  }
+
+  /** Enter 与行内点击的唯一入口：账号走动作集，其余四类走 reveal。 */
+  function activate(r: QuickHit | undefined) {
+    if (!r) return;
+    if (r.source === 'account') {
+      if (selectedAction) void runAction(selectedAction, r);
+      return;
+    }
+    void runReveal(r);
   }
 
   async function hide() {
@@ -178,10 +273,10 @@ export function LauncherApp() {
         setActionIndex((i) => (e.shiftKey ? (i - 1 + n) % n : (i + 1) % n));
       }
     } else if (e.key === 'Enter') {
-      // 执行当前选中的动作；未 Tab 过时它就是主操作（actionIndex 默认 0）
-      if (activeRow && selectedAction) {
+      // 账号行：执行当前选中的动作（未 Tab 过时它就是主操作）；其余四类：打开这一条
+      if (activeRow) {
         e.preventDefault();
-        void runAction(selectedAction, activeRow);
+        activate(activeRow);
       }
     }
   }
@@ -197,9 +292,9 @@ export function LauncherApp() {
           <Icon name="search" size={20} />
           <input
             ref={inputRef}
-            placeholder="搜索所有系统、账号或配置..."
+            placeholder="搜索账号、笔记、题库、工具与任务..."
             autoComplete="off"
-            aria-label="快速查找账号"
+            aria-label="全局搜索：账号、笔记、题库、工具与任务"
             aria-expanded={results.length > 0}
             aria-controls="launcher-results"
             value={query}
@@ -213,12 +308,14 @@ export function LauncherApp() {
         </div>
 
         {/* 原型没有命中摘要这一行，但"命中 N 条 · 耗时 · 索引 M 条"和手动刷新是既有能力。
-         * 内容区是可滚动的，摘要放进去会跟着滚走，所以留在它与输入行之间。 */}
+         * 内容区是可滚动的，摘要放进去会跟着滚走，所以留在它与输入行之间。
+         * "索引 M 条"说的是保险库那一份内存索引的条数——笔记与题库那几类是每次现查数据库的，
+         * 没有一份常驻索引可报；把它写成"索引"而不写明是保险库的，就是一句会让人误估的含糊话。 */}
         {search.data && !search.data.locked && (debounced || results.length > 0) ? (
           <div className="search-meta">
             <span>
               {debounced
-                ? `命中 ${results.length} 条 · 耗时 ${formatElapsed(search.data.elapsedMs)} · 索引 ${search.data.indexed} 条`
+                ? `命中 ${results.length} 条 · 耗时 ${formatElapsed(search.data.elapsedMs)} · 保险库索引 ${search.data.indexed} 条`
                 : `最近使用 / 收藏推荐 ${results.length} 条 · 耗时 ${formatElapsed(search.data.elapsedMs)}`}
             </span>
             <button type="button" className="launcher-refresh" onClick={() => void search.refetch()}>
@@ -226,6 +323,14 @@ export function LauncherApp() {
               刷新
             </button>
           </div>
+        ) : null}
+
+        {/* 字段限定与逗号多条件只作用于保险库（那套字段语法是保险库的列，另外四类没有对应字段）。
+         * 这件事必须说出来：不说，"输入 系统:OA 之后笔记那一类整体消失"看着就是搜索坏了。 */}
+        {search.data && !search.data.locked && search.data.vaultOnly ? (
+          <p className="launcher-note" role="status">
+            带字段限定或多条件的检索只覆盖保险库；要连笔记、题库、工具与任务一起搜，直接键入一个关键词。
+          </p>
         ) : null}
 
         <div className="search-body">
@@ -249,70 +354,102 @@ export function LauncherApp() {
           ) : null}
 
           <ul id="launcher-results" className="launcher-results" role="listbox" aria-label="搜索结果">
-            {results.map((r, i) => (
-              <li
-                key={`${r.targetId}-${r.itemId}`}
-                className="launcher-row"
-                role="option"
-                aria-selected={i === active}
-                onMouseEnter={() => setActive(i)}
-              >
-                {/* 三档纵向排：名称一行（含徽标）、元信息一行、选中那一行才有操作条。
-                 * 之前是 `1fr auto` 两列 + 操作条塞在右列里，右列按 max-content 取宽：那句
-                 * "Enter 执行… · Tab 切换本条可用操作：A / B / C / D" 实测 max-content = 507px，
-                 * 而行内可用宽度只有 558px ⇒ 左列只剩 43px——交付方 2026-10-20 那张真机照片上
-                 * 系统名称就是这么没的，提示本身也冲出本体右沿被窗口裁掉。 */}
-                <div className="launcher-row-title">
-                  <span className="launcher-row-name">{r.systemName}</span>
-                  <span className="badge badge-muted">{targetTypeLabel(r.itemType)}</span>
-                  {r.isDefault ? <span className="badge badge-success">默认</span> : null}
-                  {r.favorite ? <Icon name="star" label="收藏" className="shrink-0" /> : null}
-                </div>
-                <div className="launcher-row-meta">
-                  {r.accountAlias} · {displayMaskedUsername(r.usernameMasked)} · {r.addressSummary}
-                  {r.credentialCountOnTarget > 1 ? ` · 该目标共 ${r.credentialCountOnTarget} 个账号` : ''}
-                </div>
-                {i === active ? (
-                  <div className="launcher-row-actions">
-                    {selectedAction ? (
-                      <p className="launcher-row-hint" aria-live="polite">
-                        <kbd>Enter</kbd> 执行「{ACTION_LABELS[selectedAction]}」
-                        {activeOrder.length > 1 ? (
-                          <>
-                            {' '}
-                            · <kbd>Tab</kbd> 切换 {activeOrder.length} 项操作
-                          </>
-                        ) : null}
-                      </p>
-                    ) : null}
-                    <div className="launcher-row-chips">
-                      {actionOrder(r).map((a) => {
-                        const selected = a === selectedAction;
-                        return (
-                          <button
-                            key={a}
-                            type="button"
-                            aria-pressed={selected}
-                            className="launcher-chip"
-                            onClick={() => void runAction(a, r)}
-                          >
-                            {ACTION_LABELS[a]}
-                          </button>
-                        );
-                      })}
-                    </div>
+            {results.map((r, i) => {
+              // 两个方向的收窄各拿一个变量：`account` 是要读凭据那一批字段，
+              // `other` 是让剩下四类在类型上真的互斥（直接在 `r` 上判 source 收不掉 AccountHit）。
+              const account = r.source === 'account' ? r : null;
+              const other = r.source === 'account' ? null : r;
+              return (
+                <li
+                  key={hitKey(r)}
+                  className="launcher-row"
+                  role="option"
+                  aria-selected={i === active}
+                  onMouseEnter={() => setActive(i)}
+                >
+                  {/* 三档纵向排：名称一行（含徽标）、元信息一行、选中那一行才有操作条。
+                   * 之前是 `1fr auto` 两列 + 操作条塞在右列里，右列按 max-content 取宽：那句
+                   * "Enter 执行… · Tab 切换本条可用操作：A / B / C / D" 实测 max-content = 507px，
+                   * 而行内可用宽度只有 558px ⇒ 左列只剩 43px——交付方 2026-10-20 那张真机照片上
+                   * 系统名称就是这么没的，提示本身也冲出本体右沿被窗口裁掉。 */}
+                  <div className="launcher-row-title">
+                    <span className="launcher-row-name">{rowTitle(r)}</span>
+                    <span className="badge badge-muted">{SOURCE_LABELS[r.source]}</span>
+                    {account ? <span className="badge badge-muted">{targetTypeLabel(account.itemType)}</span> : null}
+                    {account?.isDefault ? <span className="badge badge-success">默认</span> : null}
+                    {account?.favorite ? <Icon name="star" label="收藏" className="shrink-0" /> : null}
                   </div>
-                ) : null}
-              </li>
-            ))}
+                  <div className="launcher-row-meta">
+                    {account ? (
+                      <>
+                        {account.accountAlias} · {displayMaskedUsername(account.usernameMasked)} · {account.addressSummary}
+                        {account.credentialCountOnTarget > 1 ? ` · 该目标共 ${account.credentialCountOnTarget} 个账号` : ''}
+                      </>
+                    ) : other?.source === 'note' ? (
+                      other.snippet
+                    ) : other?.source === 'quiz' ? (
+                      <>
+                        {other.libraryName} · 第 {other.seq} 题 · {qtypeLabel(other.qtype)}
+                      </>
+                    ) : other?.source === 'tool' ? (
+                      `更新于 ${formatTimestamp(other.updatedAt)}`
+                    ) : other ? (
+                      TASK_ENV_LABELS[other.env]
+                    ) : null}
+                  </div>
+                  {i === active ? (
+                    <div className="launcher-row-actions">
+                      {/* 账号行有动作集；其余四类的 Enter 就是"打开这一条"，一句话说明落到哪儿。 */}
+                      <p className="launcher-row-hint" aria-live="polite">
+                        {account ? (
+                          selectedAction ? (
+                            <>
+                              <kbd>Enter</kbd> 执行「{ACTION_LABELS[selectedAction]}」
+                              {activeOrder.length > 1 ? (
+                                <>
+                                  {' '}
+                                  · <kbd>Tab</kbd> 切换 {activeOrder.length} 项操作
+                                </>
+                              ) : null}
+                            </>
+                          ) : null
+                        ) : (
+                          <>
+                            <kbd>Enter</kbd> {other ? revealHint(other) : null}
+                          </>
+                        )}
+                      </p>
+                      {account ? (
+                        <div className="launcher-row-chips">
+                          {actionOrder(r).map((a) => {
+                            const selected = a === selectedAction;
+                            return (
+                              <button
+                                key={a}
+                                type="button"
+                                aria-pressed={selected}
+                                className="launcher-chip"
+                                onClick={() => void runAction(a, account)}
+                              >
+                                {ACTION_LABELS[a]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
 
           {/* 没输入、也没有推荐时的引导语。锁库走同一档两行式状态块（下面那条），
            * 两档只换句子不换版式；字段怎么限定交给下面的语法块，这里不重复。 */}
           {!debounced && !search.data?.locked && !search.isError && results.length === 0 ? (
             <div className="search-lead">
-              <p className="search-lead-title">输入关键字检索保险库</p>
-              <p className="search-lead-sub">可直接键入关键词，也可按字段限定检索</p>
+              <p className="search-lead-title">输入关键字检索账号、笔记、题库、工具与任务</p>
+              <p className="search-lead-sub">直接键入一个关键词五类一起搜；按字段限定检索只覆盖保险库</p>
             </div>
           ) : null}
 
@@ -332,7 +469,9 @@ export function LauncherApp() {
         </div>
 
         {/* 「导航」「关闭」用原型原话；Tab 与 Enter 这两档我们比原型多做了事（切换可用操作、执行选中操作），
-         * 照抄成"选择"会让文案承诺得比代码做得到的少，所以这两档保留自己的说法。 */}
+         * 照抄成"选择"会让文案承诺得比代码做得到的少，所以这两档保留自己的说法。
+         * Enter 那一档现在按来源分两件事：账号行执行选中的动作，其余四类打开那一条，
+         * 所以写成「打开或执行」——只写"执行"就把"打开这篇笔记"那四类漏在话外了。 */}
         <div className="search-footer">
           <span>
             <kbd>↑</kbd> <kbd>↓</kbd> 导航
@@ -341,7 +480,7 @@ export function LauncherApp() {
             <kbd>Tab</kbd> 切换操作
           </span>
           <span>
-            <kbd>Enter</kbd> 执行选中操作
+            <kbd>Enter</kbd> 打开或执行
           </span>
           <span>
             <kbd>Esc</kbd> 关闭

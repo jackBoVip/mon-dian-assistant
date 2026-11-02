@@ -45,6 +45,18 @@ function seed(): MenuNode[] {
   return seedMenuNodes();
 }
 
+/**
+ * 有子节点的一级根，按 sort_order 排——表格树里"有折叠钮的那几行"与
+ * "落点写成 —（分组）的那几行"就是这一批。名单从被检的那份夹具推出来，
+ * 加一枚一级分组（任务中心）或一级页（笔记）时这几条不用人再数一遍。
+ */
+function groupRootsWithChildren(nodes: MenuNode[] = seed()): MenuNode[] {
+  const hasChild = new Set(nodes.map((node) => node.parentId).filter(Boolean));
+  return nodes
+    .filter((node) => !node.parentId && node.kind === 'group' && hasChild.has(node.id))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
 /** 多加一条"也能进菜单管理页"的路径，用来验守卫是从树推出来的、不是两枚写死的键。 */
 function withMenusAlias(): MenuNode[] {
   return [
@@ -144,7 +156,7 @@ describe('表格树', () => {
   it('落点列给页面名与页键，分组根写「—（分组）」', async () => {
     const { el } = await renderTree();
     expect(within(el).getAllByText('users').length).toBeGreaterThan(0);
-    expect(within(el).getAllByText('—（分组）')).toHaveLength(3);
+    expect(within(el).getAllByText('—（分组）')).toHaveLength(groupRootsWithChildren().length);
   });
 
   it('所需权限列就是 PAGE_REQUIRES 那一行：多枚用「且」连接，空集写无需额外权限', async () => {
@@ -155,7 +167,7 @@ describe('表格树', () => {
     ).toBeInTheDocument();
     expect(within(el).getAllByRole('cell', { name: '无需额外权限' }).length).toBeGreaterThan(0);
     // 分组根不给结论，只说明由子项决定
-    expect(within(el).getAllByRole('cell', { name: '由子项决定' })).toHaveLength(3);
+    expect(within(el).getAllByRole('cell', { name: '由子项决定' })).toHaveLength(groupRootsWithChildren().length);
   });
 
   it('一级行有折叠钮，收起后二级行整批消失', async () => {
@@ -177,7 +189,9 @@ describe('表格树', () => {
     const toggles = within(el)
       .getAllByRole('button')
       .filter((b) => /^(展开|收起) /.test(b.getAttribute('aria-label') ?? ''));
-    expect(toggles.map((b) => b.getAttribute('aria-label'))).toEqual(['收起 系统管理', '收起 设置', '收起 快捷入口']);
+    expect(toggles.map((b) => b.getAttribute('aria-label'))).toEqual(
+      groupRootsWithChildren().map((node) => `收起 ${node.label}`),
+    );
   });
 
   it('赋权能力已迁走：本页不再查角色与权限目录', async () => {

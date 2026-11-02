@@ -129,6 +129,19 @@ pub fn library_exists(db: &Db, id: &str) -> Result<bool> {
         .is_some())
 }
 
+/// 一道题落在哪份题库的第几序号。浮层「打开这道题」用它把 id 换回可导航的坐标：
+/// 客户端只交回一个 question id，归属与页码由这一条查询现算，不接受前端自报的 libraryId。
+pub fn question_location(db: &Db, question_id: &str) -> Result<Option<(String, i64)>> {
+    let conn = db.lock_conn();
+    Ok(conn
+        .query_row(
+            "SELECT library_id, seq FROM quiz_questions WHERE id=?1",
+            params![question_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?)
+}
+
 pub fn library_questions(db: &Db, library_id: &str, offset: i64, limit: i64) -> Result<Page<QuizQuestionDto>> {
     let (offset, limit) = clamp_page(offset, limit);
     let conn = db.lock_conn();

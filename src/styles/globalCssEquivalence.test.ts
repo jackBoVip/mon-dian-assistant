@@ -159,7 +159,7 @@ const ALLOWED: {
     { match: '.select-trigger[data-disabled]', why: '禁用态从原生 :disabled 伪类改挂在 Radix 写的 data-disabled 属性上，数值沿用 .input:disabled 那一档 0.5。' },
     { match: '.select-icon', why: '触发钮右侧那枚箭头的落点（chevronDown，14px）。' },
     { match: '.select-auto', why: '行内用法（表格里那枚改角色、明文查看器那枚字段选择器）贴着文字收缩。原先是 inline style width:auto；必须留在同层做修饰符，因为 @layer mda 优先级高于 utilities，w-auto 压不住 .select 的 width:100%。' },
-    { match: '.select-content', why: 'Select 浮层宽度取触发钮宽度。其余样式复用 .dropdown-menu/.dropdown-item，不另造一套菜单词汇。' },
+    { match: '.select-content', why: 'Select 浮层：宽度取「至少等于触发钮、按内容展开、上限 320px」。钉死等于触发钮宽度在宽触发钮上没事，但笔记工具栏把「正文」「字号」做成稿子那种约 48px 的纯文字下拉后，菜单里的字被压成一列一字竖排（实测「自动识别」「标题 1」逐字换行），所以改成 max-content 并留 min-width。其余样式复用 .dropdown-menu/.dropdown-item，不另造一套菜单词汇。' },
     { match: '.icon-swap', why: '图标形变动画换成 CSS 过渡后的入场动画载体类（已批准决策：删 morphicons，用 CSS 补切换感）。' },
     { match: '@keyframes mda-icon-swap › from', why: '同上，配套关键帧。' },
     { match: '@keyframes mda-icon-swap › to', why: '同上，配套关键帧。' },
@@ -251,12 +251,12 @@ const ALLOWED: {
     /* 2026-10-21：顶部新增「系统管理」一级菜单，其二级导航改为应用左侧竖排图标栏（用户点名"类似一级菜单
      * 等布局,只不够放到应用左侧竖起来的"）。下面六条只给这条新的导航容器与按钮，不碰任何既有页面；
      * 胶囊本身的几何与配色仍由 .nav-item 那一套原样承担。 */
-    { match: '.admin-shell', why: '系统管理五页的两栏外壳：左栏导航 + 右栏内容，间距沿用全站的 --content-gap；原来是 SystemPage 单列，新增这一层只为摆下竖向导航。' },
-    { match: '.admin-sidebar', why: '左侧竖排图标栏本体：96px 胶囊（圆角/描边/沉底/内阴影取既有令牌），贴顶不拉伸，内容再长也不把栏撑高。' },
-    { match: '.admin-nav-item', why: '二级导航按钮：图标在上、文字在下，12px 字重 500；几何与过渡节奏跟 .nav-item 同一档，只是方向转成竖排。' },
-    { match: '.admin-nav-item:hover', why: '悬停态沿用 .nav-item:hover 的同一枚行高亮底与正文色，不另造颜色。' },
-    { match: ".admin-nav-item[aria-current='page']", why: '当前页与一级胶囊的选中态同口径：抬升底 + 正文色 + 700 字重 + 小阴影，让"现在在哪一页"在两种形态里读起来是同一种信号。' },
-    { match: '.admin-nav-item svg', why: '图标 20×20、描边 1.8，与 .icon-btn svg 同一档视觉重量。' },
+    { match: '.rail-shell', why: '二级页的两栏外壳：左栏导航 + 右栏内容，间距沿用全站的 --content-gap；原来是 SystemPage 单列，新增这一层只为摆下竖向导航；系统管理与任务中心共用。' },
+    { match: '.nav-rail', why: '左侧竖排图标栏本体：96px 胶囊（圆角/描边/沉底/内阴影取既有令牌），贴顶不拉伸，内容再长也不把栏撑高。' },
+    { match: '.nav-rail-item', why: '二级导航按钮：图标在上、文字在下，12px 字重 500；几何与过渡节奏跟 .nav-item 同一档，只是方向转成竖排。' },
+    { match: '.nav-rail-item:hover', why: '悬停态沿用 .nav-item:hover 的同一枚行高亮底与正文色，不另造颜色。' },
+    { match: ".nav-rail-item[aria-current='page']", why: '当前页与一级胶囊的选中态同口径：抬升底 + 正文色 + 700 字重 + 小阴影，让"现在在哪一页"在两种形态里读起来是同一种信号。' },
+    { match: '.nav-rail-item svg', why: '图标 20×20、描边 1.8，与 .icon-btn svg 同一档视觉重量。' },
     { match: '.icon-btn.is-active', why: '齿轮所在的设置/工具页被打开时给触发钮一枚激活态（抬升底 + 正文色 + 小阴影）；不打开时外观与其余图标钮完全一致，未新增任何常驻视觉元素。' },
     /* 2026-10-21：交付方要求用户管理、角色管理两张表与账号中心同一口径——列居中。只给这两张表
      * 挂 .table-center 修饰符，审核日志/菜单矩阵等其余 .table 的排版一条不动。 */

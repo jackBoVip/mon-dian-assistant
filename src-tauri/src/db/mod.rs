@@ -19,18 +19,68 @@ pub struct Db {
 
 static NEXT_INSTANCE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
 
+#[cfg(test)]
+thread_local! {
+    /// 本线程当前握着的库实例。只用来识别**同线程重入**（那才是会挂死进程的），
+    /// 别的线程排队等锁是正常并发，不该被当成重入。
+    static HELD: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `Db::lock_conn` 的守卫：照旧 `Deref` 到 `Connection`，多加的一点点东西是上面那张表。
+pub struct ConnGuard<'a> {
+    guard: parking_lot::MutexGuard<'a, Connection>,
+    #[cfg(test)]
+    instance: usize,
+}
+
+impl std::ops::Deref for ConnGuard<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for ConnGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Connection {
+        &mut self.guard
+    }
+}
+
+impl Drop for ConnGuard<'_> {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        HELD.with(|held| held.borrow_mut().retain(|i| *i != self.instance));
+    }
+}
+
+impl<'a> ConnGuard<'a> {
+    #[cfg(test)]
+    fn new(guard: parking_lot::MutexGuard<'a, Connection>, instance: usize) -> Self {
+        HELD.with(|held| held.borrow_mut().push(instance));
+        Self { guard, instance }
+    }
+
+    #[cfg(not(test))]
+    fn new(guard: parking_lot::MutexGuard<'a, Connection>, _instance: usize) -> Self {
+        Self { guard }
+    }
+}
+
 impl Db {
     /// 取连接锁。全库只有一个连接，锁不可重入：同线程重复加锁会永久挂死进程。
     /// 测试构建下把它变成显式 panic（带定位信息），而不是无声死锁。
-    pub fn lock_conn(&self) -> parking_lot::MutexGuard<'_, Connection> {
+    ///
+    /// 判据按线程而不是 `is_locked()`：后者不认人，任务中心这类"多个工作线程各写一行状态"
+    /// 的正常并发会被它全体判成重入，守卫就成了假阳性制造机。
+    pub fn lock_conn(&self) -> ConnGuard<'_> {
         #[cfg(test)]
-        if self.conn.is_locked() {
+        if HELD.with(|held| held.borrow().contains(&self.instance)) {
             panic!(
                 "同线程重入锁定数据库连接（db/mod.rs::lock_conn）——会把进程永久挂死；\
                  请在加锁前读出所需数据，或用 {{ }} 收窄 guard 作用域"
             );
         }
-        self.conn.lock()
+        ConnGuard::new(self.conn.lock(), self.instance)
     }
 
     fn from_connection(conn: Connection, path: String) -> Result<Self> {

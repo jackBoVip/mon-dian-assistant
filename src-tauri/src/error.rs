@@ -12,6 +12,10 @@ pub enum AppError {
     Locked,
     #[error("会话已过期，请重新登录")]
     SessionExpired,
+    /// 任务运行被取消（用户点了取消，或保险库锁定要求立即停下）。
+    /// 单独一枚码：界面和日志要能分清"人不要了"和"出错了"。
+    #[error("操作已取消")]
+    Cancelled,
     #[error("未授权：当前使用者无权执行该操作")]
     Forbidden,
     #[error("记录不存在或不可见")]
@@ -136,6 +140,36 @@ pub enum AppError {
     QuizUnsupportedPlatform,
     #[error("没有可检索的题库：请至少选择一份题库")]
     QuizScopeEmpty,
+    /// 笔记正文体积上限；提示里给出可执行的下一步（拆篇或压图）。
+    #[error("笔记正文过大：单篇上限 5 MB，请压缩图片或拆成多篇后保存")]
+    NoteTooLarge,
+    #[error("图片格式不受支持：仅接受 PNG / JPEG / GIF / WebP")]
+    NoteAssetUnsupported,
+    /// 页面库：标题与正文各有一条硬上限，提示里给出可执行的下一步（起个短名 / 删减内容）。
+    #[error("页面标题不能为空，最多 120 个字")]
+    HtmlPageTitleInvalid,
+    #[error("页面正文过大：单页上限 5 MB，请删减内容或拆成多页后保存")]
+    HtmlPageTooLarge,
+    /// 预览通道没起来（回环端口绑不上）。界面要给的下一步是"重启应用并看日志"，
+    /// 不是"再试一次"——同一次进程里它不会自己恢复。
+    #[error("预览服务未启动：请重启应用；仍失败时查看日志里的回环端口绑定错误")]
+    PreviewUnavailable,
+    /// 发布说明读不到：路径不在本机、被移走或没有读权限。
+    #[error("发布说明读不到：请确认文件还在本机原路径，且不是只有网络位置才有的临时文件")]
+    TaskFileUnreadable,
+    /// 任务中心：目标控制台的会话不可用了（Cookie 过期或被拒）。
+    /// 单独一枚，因为界面要给的下一步是"重新登录/重绑凭据"，不是"稍后再试"。
+    #[error("目标系统登录状态已失效：请在环境配置里重新绑定账号后重试")]
+    TaskSessionExpired,
+    /// 括号里只放行类别与错误种类（DNS/连接/超时/状态码），不含 URL 的查询串与 Cookie。
+    #[error("目标系统不可达：{0}")]
+    TaskUnreachable(String),
+    /// 括号里放行 HTTP 状态码与控制台返回的 errorCode/message（已脱敏），是人排障要看的。
+    #[error("目标系统返回异常：{0}")]
+    TaskRemote(String),
+    /// profile 缺项/非法（端点路径为空、选择器不合法等）。正文说清缺哪一项，不含凭据。
+    #[error("任务配置不合法：{0}")]
+    TaskProfileInvalid(String),
     #[error("系统安全存储不可用：需要操作者显式同意才能改用本机文件密钥")]
     DeviceKeyConsentRequired,
     /// 保险库文件在、设备密钥取不到。此时生成新密钥会让旧库永久无法解密，只能停下来说明情况。
@@ -170,6 +204,7 @@ impl AppError {
             AppError::Crypto(_) => "CRYPTO_ERROR",
             AppError::Locked => "SESSION_LOCKED",
             AppError::SessionExpired => "SESSION_EXPIRED",
+            AppError::Cancelled => "CANCELLED",
             AppError::Forbidden => "FORBIDDEN",
             AppError::NotFound => "NOT_FOUND",
             AppError::WrongPassword => "WRONG_PASSWORD",
@@ -226,6 +261,16 @@ impl AppError {
             AppError::QuizScreenPermissionDenied => "QUIZ_SCREEN_PERMISSION_DENIED",
             AppError::QuizUnsupportedPlatform => "QUIZ_UNSUPPORTED_PLATFORM",
             AppError::QuizScopeEmpty => "QUIZ_SCOPE_EMPTY",
+            AppError::NoteTooLarge => "NOTE_TOO_LARGE",
+            AppError::NoteAssetUnsupported => "NOTE_ASSET_UNSUPPORTED",
+            AppError::HtmlPageTitleInvalid => "HTML_PAGE_TITLE_INVALID",
+            AppError::HtmlPageTooLarge => "HTML_PAGE_TOO_LARGE",
+            AppError::PreviewUnavailable => "PREVIEW_UNAVAILABLE",
+            AppError::TaskFileUnreadable => "TASK_FILE_UNREADABLE",
+            AppError::TaskSessionExpired => "TASK_SESSION_EXPIRED",
+            AppError::TaskUnreachable(_) => "TASK_UNREACHABLE",
+            AppError::TaskRemote(_) => "TASK_REMOTE",
+            AppError::TaskProfileInvalid(_) => "TASK_PROFILE_INVALID",
             AppError::DeviceKeyConsentRequired => "DEVICE_KEY_CONSENT_REQUIRED",
             AppError::DeviceKeyLostVaultIntact => "DEVICE_KEY_LOST_VAULT_INTACT",
             AppError::Serde(_) => "SERDE",
@@ -243,6 +288,10 @@ impl AppError {
             AppError::QuizParseFailed(where_) | AppError::QuizRowInvalid(where_) => where_.clone(),
             // 只带失败环节与系统错误类型（例如「枚举显示器失败」），截图内容不在这条链上
             AppError::QuizCaptureFailed(where_) => where_.clone(),
+            // 任务中心的三条：括号里已经是"类别 + 错误种类/状态码/errorCode"，不含 URL 查询串与 Cookie
+            AppError::TaskUnreachable(reason)
+            | AppError::TaskRemote(reason)
+            | AppError::TaskProfileInvalid(reason) => reason.clone(),
             other => other.code().to_string(),
         }
     }

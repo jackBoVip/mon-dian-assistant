@@ -10,7 +10,7 @@ use crate::commands::accounts::doc_of;
 use crate::db::repo;
 use crate::error::AppError;
 use crate::external_tools::{self, Kind};
-use crate::quick_launcher::{self, actions as ql, parser, query as qlq, shortcut, QuickAction};
+use crate::quick_launcher::{self, actions as ql, parser, query as qlq, shortcut, QuickAction, QuickSource};
 use crate::rbac::perm;
 use crate::rbac;
 use crate::settings;
@@ -18,30 +18,51 @@ use crate::state::AppCore;
 
 const SEARCH_LIMIT: usize = 50;
 
-/// 浮层「查看详情」落到主窗的那枚事件名。**前端 `src/components/AppShell.tsx` 里必须是同一枚
+/// 浮层「打开这一条」落到主窗的那枚事件名。**前端 `src/components/AppShell.tsx` 里必须是同一枚
 /// 字面量**——`ipcContract.test.ts` 有一条专门比两侧同源，因为这类跨窗动作坏起来都是
 /// "命令全绿、点了没反应"（交付方 2026-10-20 报的正是这个）。
 pub const OPEN_DETAIL_EVENT: &str = "launcher://open-detail";
 
-/// 导航载荷。键名与前端 `LauncherNavPayload` 同形（camelCase），两侧都在这条测试里被钉住。
+/// 导航载荷：`page` 决定主窗切到哪一页，其余键按页给。
 ///
-/// `keyword` 带的是**这一条凭据的别名**，不是浮层里那次搜索的原串：主窗右栏的关键字只匹配
-/// `accountAlias` 与脱敏用户名，而浮层的查询可能命中系统名、地址、标签、分组——把原串搬过去
+/// 键名与前端 `LauncherNavPayload` 同形（camelCase），两侧都在这条测试里被钉住。
+///
+/// 账号那一条带的 `keyword` 是**这一条凭据的别名**，不是浮层里那次搜索的原串：主窗右栏的关键字
+/// 只匹配 `accountAlias` 与脱敏用户名，而浮层的查询可能命中系统名、地址、标签、分组——把原串搬过去
 /// 大概率筛出一张空表。别名正是那一列显示的名字，所以筛完剩的就是用户点的那一条。
-fn detail_nav_payload(target_id: &str, item_id: &str, keyword: &str) -> serde_json::Value {
-    serde_json::json!({ "targetId": target_id, "itemId": item_id, "keyword": keyword })
+/// 其余四页不需要关键字：它们按 id 选中，页内的筛选框保持原样。
+fn account_nav_payload(target_id: &str, item_id: &str, keyword: &str) -> serde_json::Value {
+    serde_json::json!({ "page": "accounts", "targetId": target_id, "itemId": item_id, "keyword": keyword })
 }
 
-/// 把详情要显示的那一条交到主窗手上：收起浮层 → 主窗回到前台 → 发导航事件。
+fn note_nav_payload(note_id: &str) -> serde_json::Value {
+    serde_json::json!({ "page": "notes", "noteId": note_id })
+}
+
+fn tool_nav_payload(page_id: &str) -> serde_json::Value {
+    serde_json::json!({ "page": "html", "pageId": page_id })
+}
+
+/// 题库的落点坐标是 `(libraryId, seq)`：`seq` 是题在该库内的序号，落点页用它算出该翻到第几页。
+/// `questionId` 一起带上，用来在翻到的那一页里认出高亮的是哪一行。
+fn quiz_nav_payload(library_id: &str, question_id: &str, seq: i64) -> serde_json::Value {
+    serde_json::json!({ "page": "quiz", "libraryId": library_id, "questionId": question_id, "seq": seq })
+}
+
+fn task_nav_payload(task_key: &str, env: &str) -> serde_json::Value {
+    serde_json::json!({ "page": "tasks", "taskKey": task_key, "env": env })
+}
+
+/// 把浮层点中的那一条交到主窗手上：收起浮层 → 主窗回到前台 → 发导航事件。
 ///
 /// 浮层是置顶窗，不收起它就会压在应用上面；主窗可能被最小化，所以 unminimize 也要来一下。
-fn reveal_in_main(app: &AppHandle, target_id: &str, item_id: &str, keyword: &str) -> Result<()> {
+fn reveal_in_main(app: &AppHandle, payload: serde_json::Value) -> Result<()> {
     crate::launcher::show_or_hide(app, false)?;
     let main = app.get_webview_window("main").ok_or(AppError::NotFound)?;
     let _ = main.unminimize();
     main.show().map_err(|e| AppError::internal("主窗口显示", &e))?;
     let _ = main.set_focus();
-    let _ = main.emit(OPEN_DETAIL_EVENT, detail_nav_payload(target_id, item_id, keyword));
+    let _ = main.emit(OPEN_DETAIL_EVENT, payload);
     Ok(())
 }
 
@@ -54,9 +75,11 @@ pub fn quick_search(query: String) -> Result<SearchReply> {
     let show_recent = settings::get_bool(&core.db, "quick_launcher_show_recent", true);
     // 需求 line 294 的"最近使用/收藏"这一档同级微调同样由设置决定，同样每次请求都读
     let rank_recent = settings::get_bool(&core.db, "quick_launcher_rank_recent_favorite", true);
-    // 未解锁：只回解锁提示，绝不返回任何缓存结果
+    // 未解锁：只回解锁提示，绝不返回任何缓存结果。
+    // 笔记/题库/工具/任务这四类也存在同一份整库加密的 vault.db 里，锁定时同样读不到——
+    // 所以这次扩展没有新增任何"锁着也能查"的通道，一条都不需要。
     if !core.vault.is_unlocked() {
-        return Ok(SearchReply { locked: true, results: vec![], syntax_error: None, elapsed_ms: started.elapsed().as_micros(), indexed: 0 });
+        return Ok(SearchReply { locked: true, results: vec![], syntax_error: None, vault_only: false, elapsed_ms: started.elapsed().as_micros(), indexed: 0 });
     }
     let user = core.check_session()?;
     // 审查 F9：索引改成写后置脏、读前重建。搜索是这条链上唯一的读侧，
@@ -64,27 +87,105 @@ pub fn quick_search(query: String) -> Result<SearchReply> {
     core.ensure_index_fresh()?;
     rbac::require(&core.db, &user, perm::MENU_QUICK_LAUNCHER)?;
 
+    // 解析只做一次：保险库那一条腿用它匹配，扇出与否的判据（字段限定/多条件）也读它
+    let parsed = match parser::parse(&query) {
+        Ok(p) => p,
+        Err(AppError::QuerySyntax(_)) => {
+            return Ok(SearchReply {
+                locked: false,
+                results: vec![],
+                // 不回显原文，只说明哪里不合法
+                syntax_error: Some("查询串无法解析：请检查引号是否闭合，或字段名前是否拼写正确（例如 系统: 、地址: 、账号别名: ）。".to_string()),
+                vault_only: false,
+                elapsed_ms: started.elapsed().as_micros(),
+                indexed: 0,
+            })
+        }
+        Err(e) => return Err(e),
+    };
+
     let policy = action_policy(&core);
     let ext = extension_gate(&core);
-    let res = core.vault
-        .with_index(|idx| qlq::search_unlocked(idx, &query, limit, ext, &policy, show_recent, rank_recent))
-        .and_then(|r| r);
-    match res {
-        Ok(results) => {
-            let indexed = core.vault.with_index(|i| i.len()).unwrap_or(0);
-            Ok(SearchReply { locked: false, results, syntax_error: None, elapsed_ms: started.elapsed().as_micros(), indexed })
+    // 保险库那一条腿只碰内存索引；四类查询碰数据库，必须在 with_index 回调**外面**跑，
+    // 回调里回碰 vault 状态或数据库锁会同线程死锁（见 auth/session.rs 的说明）。
+    let account_hits = core.vault.with_index(|idx| qlq::search_vault(idx, &parsed, limit, ext, &policy, show_recent, rank_recent))?;
+    let indexed = core.vault.with_index(|i| i.len()).unwrap_or(0);
+
+    let mut hits: Vec<qlq::QuickHit> = account_hits.into_iter().map(qlq::QuickHit::Account).collect();
+    // 扇不扇出只有一个判据（字段限定、多条件、空输入都挡下），词就是那个唯一条件
+    if let Some(term) = qlq::fan_out_term(&parsed) {
+        hits.extend(crate::quick_launcher::sources::search_sources(&core.db, &user, term, limit.min(qlq::PER_SOURCE_LIMIT))?);
+    }
+    let vault_only = qlq::is_vault_only(&parsed);
+    let results = qlq::merge_ranked(hits, limit);
+
+    Ok(SearchReply { locked: false, results, syntax_error: None, vault_only, elapsed_ms: started.elapsed().as_micros(), indexed })
+}
+
+/// 浮层里非账号那四类的 Enter：把这一条落到主窗对应的页面。
+///
+/// 客户端只交回 `source` 与一个 id，落点坐标由后端现查（题在哪份库、第几序号），
+/// 不接受前端自报归属；权限也在这里重新判一遍——搜索结果能列出来不代表你现在还有权看，
+/// 管理员可能在你输入这几秒里把权限撤了。
+///
+/// 账号那一类不在这里：它的动作集（打开/填充/复制/设为默认/查看详情）由 `quick_action` 负责，
+/// 两处入口不能各兑一半。
+#[tauri::command]
+pub fn quick_reveal(app: AppHandle, source: QuickSource, id: String, env: Option<String>) -> Result<ActionReply> {
+    let core = crate::state::core();
+    let user = core.check_session()?;
+    rbac::require(&core.db, &user, perm::MENU_QUICK_LAUNCHER)?;
+    let (payload, message) = match source {
+        QuickSource::Note => {
+            rbac::require(&core.db, &user, perm::NOTES_READ)?;
+            let title = crate::notes::store::title(&core.db, &user, &id)?;
+            (note_nav_payload(&id), format!("已在主窗口的笔记页打开「{title}」"))
         }
-        Err(AppError::QuerySyntax(_)) => Ok(SearchReply {
-            locked: false,
-            results: vec![],
-            // 不回显原文，只说明哪里不合法
-            syntax_error: Some("查询串无法解析：请检查引号是否闭合，或字段名前是否拼写正确（例如 系统: 、地址: 、账号别名: ）。".to_string()),
-            elapsed_ms: started.elapsed().as_micros(),
-            indexed: 0,
-        }),
-        Err(e) => Err(e),
+        QuickSource::Tool => {
+            rbac::require(&core.db, &user, perm::HTML_PAGE_READ)?;
+            let title = crate::html_pages::store::title(&core.db, &id)?;
+            (tool_nav_payload(&id), format!("已在主窗口的工具页选中「{title}」"))
+        }
+        QuickSource::Quiz => {
+            rbac::require(&core.db, &user, perm::QUIZ_LIBRARY_READ)?;
+            let (library_id, seq) = crate::quiz::store::question_location(&core.db, &id)?
+                .ok_or(AppError::NotFound)?;
+            (quiz_nav_payload(&library_id, &id, seq), "已在主窗口的题库里翻到那道题".to_string())
+        }
+        QuickSource::Task => {
+            rbac::require(&core.db, &user, perm::TASK_RELEASE_VIEW)?;
+            let env_raw = env.as_deref().ok_or(AppError::InvalidInput)?;
+            let env_v = crate::tasks::Env::parse(env_raw).ok_or(AppError::InvalidInput)?;
+            let def = crate::tasks::task_def(&id).ok_or(AppError::InvalidInput)?;
+            // 环境还得真是这一枚任务定义支持的档位：给一个不存在的 env 切过去，
+            // 落点页会显示一个切不过去的开关——那就是"界面上有、点下去没反应"。
+            if !def.envs.contains(&env_v) {
+                return Err(AppError::InvalidInput);
+            }
+            // 提示里只报任务名，不报环境中文名：那两个字（测试/生产）活在前端 `ENVS` 里，
+            // Rust 复述一份迟早会跟它漂移；环境本身在落点页的那个开关上看得到。
+            (task_nav_payload(&id, env_v.as_str()), format!("已在主窗口的任务中心打开「{}」", def.label))
+        }
+        QuickSource::Account => {
+            return Err(AppError::InvalidInput);
+        }
+    };
+    audit(&core, Some(&user), &format!("quick_launcher.reveal.{}", source_key(source)), None, Some(&id), true, None, "launcher");
+    reveal_in_main(&app, payload)?;
+    Ok(ActionReply::ok("reveal", &message))
+}
+
+/// 审计里那一列的动作名。用后端已有的 `perm` 命名口径，不在前端另起一套。
+fn source_key(source: QuickSource) -> &'static str {
+    match source {
+        QuickSource::Account => "account",
+        QuickSource::Note => "note",
+        QuickSource::Quiz => "quiz",
+        QuickSource::Tool => "tool",
+        QuickSource::Task => "task",
     }
 }
+
 
 #[tauri::command]
 pub fn quick_action(app: AppHandle, action: QuickAction, item_id: String, target_id: String, credential_id: Option<String>) -> Result<ActionReply> {
@@ -108,7 +209,7 @@ pub fn quick_action(app: AppHandle, action: QuickAction, item_id: String, target
             let alias = doc_of(&core, &item_id).map(|d| d.account_alias).unwrap_or_default();
             let keyword = if alias.is_empty() { detail.target.display_name.clone() } else { alias };
             audit(&core, Some(&user), "quick_launcher.view_detail", Some("target"), Some(&target_id), true, None, "launcher");
-            reveal_in_main(&app, &target_id, &item_id, &keyword)?;
+            reveal_in_main(&app, account_nav_payload(&target_id, &item_id, &keyword))?;
             Ok(ActionReply::ok("view_detail", &format!("已在主窗口的账号中心筛出「{}」", keyword)))
         }
         QuickAction::SelectOtherAccount => {
@@ -486,11 +587,35 @@ mod tests {
     /// 载荷形状是跨窗契约的一半（另一半在 `src/state/launcherNav.ts`，由 ipcContract.test.ts 比字面量）。
     /// `keyword` 是这一条凭据的别名：主窗右栏的关键字匹配的就是 `accountAlias` 与脱敏用户名，
     /// 把浮层里那次搜索的原串直接搬过去是错的——原串可能命中的是系统名或地址，搬过去会筛成空表。
+    ///
+    /// `page` 是四页共用的判别键（账号/笔记/题库/工具/任务中心都从这一个事件落）：
+    /// 少了它，主窗只会无条件切到账号中心，笔记那一类点进去就是一片空白。
     #[test]
-    fn detail_nav_payload_uses_camel_case_keys() {
-        let p = detail_nav_payload("t-9", "i-3", "日常办公");
+    fn account_nav_payload_uses_camel_case_keys_and_names_the_page() {
+        let p = account_nav_payload("t-9", "i-3", "日常办公");
+        assert_eq!(p["page"], "accounts");
         assert_eq!(p["targetId"], "t-9");
         assert_eq!(p["itemId"], "i-3");
         assert_eq!(p["keyword"], "日常办公");
+    }
+
+    /// 另外三页的载荷各自只带落点需要的坐标，不带关键字：
+    /// 它们按 id 选中，页内筛选框保持原样才是可预期的行为。
+    #[test]
+    fn other_pages_carry_only_their_own_coordinates() {
+        assert_eq!(note_nav_payload("n-1")["page"], "notes");
+        assert_eq!(note_nav_payload("n-1")["noteId"], "n-1");
+        assert_eq!(tool_nav_payload("p-1")["page"], "html");
+        assert_eq!(tool_nav_payload("p-1")["pageId"], "p-1");
+
+        let q = quiz_nav_payload("l-1", "q-9", 42);
+        assert_eq!(q["page"], "quiz");
+        assert_eq!(q["libraryId"], "l-1");
+        assert_eq!(q["seq"], serde_json::json!(42));
+
+        let t = task_nav_payload("release", "prod");
+        assert_eq!(t["page"], "tasks");
+        assert_eq!(t["taskKey"], "release");
+        assert_eq!(t["env"], "prod");
     }
 }

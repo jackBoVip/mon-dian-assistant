@@ -103,6 +103,8 @@ pub const THEME_TOKEN_NAMES: &[&str] = &[
     "--t-success",
     "--t-success-soft",
     "--t-warning",
+    "--t-warning-soft",
+    "--t-danger-soft",
     "--t-star",
     "--t-accent",
     "--t-surface",
@@ -365,7 +367,7 @@ mod tests {
     }
 
     /// 自定义主题的令牌白名单必须与 tokens.css 的 glass 块成对：缺失 0 且陈旧 0。
-    /// 只写"我们列了 32 枚"不算——名单会漂，漂了就有令牌存得进来却没有对应 CSS，
+    /// 只写"我们列了整套"不算——名单会漂，漂了就有令牌存得进来却没有对应 CSS，
     /// 或者 CSS 里有、用户却永远填不了。
     #[test]
     fn theme_token_whitelist_matches_tokens_css_both_directions() {

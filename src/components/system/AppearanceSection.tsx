@@ -187,7 +187,8 @@ export function AppearanceSection() {
           <div className="min-w-0">
             <h3 className="text-[13px] font-semibold text-ink">新增一档自定义主题</h3>
             <p className="mt-0.5 text-[11px] leading-4 text-ink-muted">
-              粘一整套设计令牌（形如 <code className="text-[10.5px]">--t-primary: …;</code>），32 枚齐全且逐枚合法才会存下来。
+              粘一整套设计令牌（形如 <code className="text-[10.5px]">--t-primary: …;</code>），
+              {THEME_TOKEN_NAMES.length} 枚齐全且逐枚合法才会存下来。
               改哪几枚写哪几枚；删掉的行会被点名，把那几行从模板里粘回来即可。
             </p>
           </div>

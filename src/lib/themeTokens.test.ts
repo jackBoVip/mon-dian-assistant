@@ -64,13 +64,16 @@ describe('parseThemeTokens', () => {
   });
 
   it('缺枚就整份不收，并把缺的点名（半套规则进界面比不进去更糟）', () => {
-    const body = [...glassBlock()].slice(0, 20).map(([k, v]) => `${k}: ${v};`).join('\n');
+    const all = [...glassBlock()];
+    const kept = all.slice(0, 20);
+    const body = kept.map(([k, v]) => `${k}: ${v};`).join('\n');
     const res = parseThemeTokens(body);
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.errors).toHaveLength(1);
-    expect(res.errors[0].reason).toContain('少了 12 枚');
-    expect(res.errors[0].reason).toContain('--glow-inset');
+    // 枚数由 glass 块推，不手写：加一枚令牌时这里不必跟着改一个数
+    expect(res.errors[0].reason).toContain(`少了 ${all.length - kept.length} 枚`);
+    expect(res.errors[0].reason).toContain(all[all.length - 1][0]);
   });
 
   it('注释、空行、缩进、行尾分号有无这些排版噪音都能读（模板里就带着它们）', () => {

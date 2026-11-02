@@ -14,7 +14,7 @@ use mon_dian_assistant_lib::auth::users;
 use mon_dian_assistant_lib::crypto::vault_key::VaultKey;
 use mon_dian_assistant_lib::db::{repo, Db};
 use mon_dian_assistant_lib::quick_launcher::search::{MatchKind, SearchDoc, SearchIndex};
-use mon_dian_assistant_lib::quick_launcher::{parse, query::search_unlocked, query::ActionPolicy};
+use mon_dian_assistant_lib::quick_launcher::{parse, query::search_vault, query::ActionPolicy};
 
 const ROWS: usize = 10_000;
 
@@ -63,9 +63,11 @@ fn bench_index_search(c: &mut Criterion) {
             })
         });
     }
-    // 与命令层完全相同的入口（含策略与扩展门）
-    g.bench_function("via_search_unlocked", |b| {
-        b.iter(|| black_box(search_unlocked(&index, black_box("营销业务系统 7 区, oa00123"), 20, true, &policy, true, true).map(|v| v.len())))
+    // 与命令层完全相同的入口（含策略与扩展门）。解析在命令层做一次、结果同时用于判扇出，
+    // 所以这里也先 parse 再把 ParsedQuery 递进去。
+    g.bench_function("via_search_vault", |b| {
+        let parsed = parse("营销业务系统 7 区, oa00123").expect("bench 查询必须可解析");
+        b.iter(|| black_box(search_vault(&index, black_box(&parsed), 20, true, &policy, true, true).len()))
     });
     g.finish();
 

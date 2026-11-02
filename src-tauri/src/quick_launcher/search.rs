@@ -67,11 +67,28 @@ impl SearchDoc {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MatchKind {
     Exact,
     Prefix,
     Contains,
+}
+
+/// 单个名字字段对单个关键词的匹配等级。
+///
+/// 保险库以外的四个源用它：它们没有"多字段 AND"那套结构，只需要把标题（或题干）
+/// 对关键词的远近算成与 [`field_match`] 同判据的三档。正文命中天然落到 `Contains`——
+/// 正文里出现这个词，本来就说明不上了名字层面的任何事。
+pub fn tier_of(name: &str, term: &str) -> MatchKind {
+    let folded = name.to_lowercase();
+    if folded == term {
+        MatchKind::Exact
+    } else if folded.starts_with(term) {
+        MatchKind::Prefix
+    } else {
+        MatchKind::Contains
+    }
 }
 
 fn field_match(doc: &SearchDoc, cond: &Condition) -> Option<MatchKind> {
@@ -435,7 +452,8 @@ mod tests {
     /// 而不是只靠前端不去请求——直接调用命令同样拿不到内容。
     #[test]
     fn empty_input_suggestions_follow_the_show_recent_setting() {
-        use crate::quick_launcher::query::{search_unlocked, ActionPolicy};
+        use crate::quick_launcher::query::{search_vault, ActionPolicy};
+        use crate::quick_launcher::parse;
 
         let mut fav = doc("c-fav", "OA办公系统", "https://oa.nmgdl.cn", "lisi", "日常办公", "web", &["门户"]);
         fav.favorite = true;
@@ -445,23 +463,23 @@ mod tests {
         let idx = SearchIndex::new(vec![fav, recent, plain]);
         let policy = ActionPolicy::default();
 
-        let on = search_unlocked(&idx, "", 10, false, &policy, true, true).unwrap();
+        let on = search_vault(&idx, &parse("").unwrap(), 10, false, &policy, true, true);
         assert_eq!(
             on.iter().map(|r| r.item_id.as_str()).collect::<Vec<_>>(),
             vec!["c-fav", "c-recent"],
             "开启时只给收藏与最近使用，收藏在前；无关记录不得混进来"
         );
 
-        let off = search_unlocked(&idx, "", 10, false, &policy, false, true).unwrap();
+        let off = search_vault(&idx, &parse("").unwrap(), 10, false, &policy, false, true);
         assert!(off.is_empty(), "设置关闭时空输入必须不返回任何保险库记录");
 
         // 该设置只管"没有任何条件"这一种输入：有真实条件时照常搜
-        let typed = search_unlocked(&idx, "OA", 10, false, &policy, false, true).unwrap();
+        let typed = search_vault(&idx, &parse("OA").unwrap(), 10, false, &policy, false, true);
         assert_eq!(typed.len(), 1);
         assert_eq!(typed[0].item_id, "c-fav");
 
         // 只有一个分隔符（语法上等于空输入）也归"空输入"，不得绕过设置
-        assert!(search_unlocked(&idx, "，", 10, false, &policy, false, true).unwrap().is_empty());
+        assert!(search_vault(&idx, &parse("，").unwrap(), 10, false, &policy, false, true).is_empty());
     }
 
     /// 需求 line 294：优先级是 完全 > 前缀 > 包含，"最近使用/收藏"只在**同一等级内部**微调。

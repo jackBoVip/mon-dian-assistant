@@ -3623,7 +3623,7 @@ dependencies = [
 
 [[package]]
 name = "mon-dian-assistant"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "aes-gcm",
  "arboard",
@@ -3641,6 +3641,7 @@ dependencies = [
  "hmac",
  "image",
  "keyring",
+ "libloading 0.8.9",
  "log",
  "open",
  "parking_lot",
@@ -3649,6 +3650,7 @@ dependencies = [
  "rand 0.8.8",
  "rusqlite",
  "rust_xlsxwriter",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
@@ -3666,6 +3668,7 @@ dependencies = [
  "ureq",
  "url",
  "uuid",
+ "webpki-roots 0.26.11",
  "xcap",
  "zeroize",
  "zip 2.6.1",
@@ -6090,6 +6093,7 @@ dependencies = [
  "gtk",
  "heck 0.5.0",
  "http",
+ "image",
  "jni",
  "libc",
  "log",
@@ -7079,6 +7083,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
 dependencies = [
  "base64 0.22.1",
+ "flate2",
  "log",
  "once_cell",
  "rustls",

@@ -13,12 +13,15 @@ pub mod boot;
 pub mod data;
 pub mod devicekey;
 pub mod external_tools;
+pub mod html_pages;
 pub mod lan;
 pub mod launcher;
 pub mod menus;
+pub mod notes;
 pub mod quiz;
 pub mod rbac;
 pub mod system;
+pub mod tasks;
 pub mod vault;
 
 use serde::{Deserialize, Serialize};
@@ -370,10 +373,13 @@ impl ActionReply {
 #[serde(rename_all = "camelCase")]
 pub struct SearchReply {
     pub locked: bool,
-    pub results: Vec<crate::quick_launcher::query::QuickResult>,
+    pub results: Vec<crate::quick_launcher::query::QuickHit>,
     /// 解析失败时只回错误说明，绝不回显查询原文
     #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_error: Option<String>,
+    /// 这次只搜了保险库（带字段限定或多条件的查询）。
+    /// 界面上要把它说出来：不然「输入 `系统:OA` 后笔记那一类整体消失」看起来像坏了。
+    pub vault_only: bool,
     pub elapsed_ms: u128,
     pub indexed: usize,
 }

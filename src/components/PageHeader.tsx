@@ -2,8 +2,11 @@ import type { ReactNode } from 'react';
 
 export interface PageHeaderProps {
   title: string;
-  /** 一句说明：术语免责（外部台账 ≠ 本软件登录凭据）这类必须常驻的话写在这里。 */
-  desc: ReactNode;
+  /**
+   * 一句说明：术语免责（外部台账 ≠ 本软件登录凭据）这类必须常驻的话写在这里。
+   * 不传就不渲染那一行（笔记页按交付方 2026-10-30 的要求只留标题，说明收在别处）。
+   */
+  desc?: ReactNode;
   /** 右侧动作区，控制台稿把「新增目标」这种主操作放到页头而不是筛选行末尾。 */
   actions?: ReactNode;
 }
@@ -19,7 +22,7 @@ export function PageHeader({ title, desc, actions }: PageHeaderProps) {
     <div className="page-header">
       <div className="page-heading">
         <h1 className="page-title">{title}</h1>
-        <p className="page-desc">{desc}</p>
+        {desc ? <p className="page-desc">{desc}</p> : null}
       </div>
       {actions ? <div className="page-actions">{actions}</div> : null}
     </div>

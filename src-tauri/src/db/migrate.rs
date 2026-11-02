@@ -27,9 +27,12 @@ const MIGRATIONS: &[Migration] = &[
     Migration { version: 13, name: "0013_lan_update", sql: include_str!("../../../migrations/0013_lan_update.sql") },
     Migration { version: 14, name: "0014_external_tools", sql: include_str!("../../../migrations/0014_external_tools.sql") },
     Migration { version: 15, name: "0015_quiz", sql: include_str!("../../../migrations/0015_quiz.sql") },
+    Migration { version: 16, name: "0016_task_center", sql: include_str!("../../../migrations/0016_task_center.sql") },
+    Migration { version: 17, name: "0017_notes", sql: include_str!("../../../migrations/0017_notes.sql") },
+    Migration { version: 18, name: "0018_html_pages", sql: include_str!("../../../migrations/0018_html_pages.sql") },
 ];
 
-pub const LATEST_VERSION: i64 = 15;
+pub const LATEST_VERSION: i64 = 18;
 
 pub fn run(db: &Db) -> Result<()> {
     let conn = db.lock_conn();
@@ -109,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_nodes_seed_matches_the_eleven_pages() {
+    fn menu_nodes_seed_matches_the_twelve_pages() {
         let db = Db::open_in_memory(&vec![5u8; 32]).unwrap();
         let c = db.lock_conn();
         let total: i64 = c.query_row("SELECT count(*) FROM menu_nodes", [], |r| r.get(0)).unwrap();
@@ -123,7 +126,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!((total, roots, orphans), (16, 5, 0), "菜单种子应是 5 根 + 11 叶，且父节点都存在");
+        assert_eq!((total, roots, orphans), (20, 8, 0), "菜单种子应是 8 根 + 12 叶，且父节点都存在");
 
         let mut stmt = c
             .prepare("SELECT page_key FROM menu_nodes WHERE parent_id IS NOT NULL ORDER BY page_key")
@@ -142,13 +145,14 @@ mod tests {
                 "launcher",
                 "menus",
                 "permissions",
+                "release",
                 "roles",
                 "security",
                 "tools",
                 "update",
                 "users"
             ],
-            "二级菜单必须恰好落在十一枚页面上"
+            "二级菜单必须恰好落在十二枚页面上"
         );
     }
 
@@ -171,7 +175,7 @@ mod tests {
             .filter(|key| !matches!(key.as_str(), "top.accounts" | "top.system" | "tools.launcher"))
             .map(|key| format!("menu.node.{key}"))
             .collect();
-        assert_eq!(expected.len(), 13, "16 枚节点里 3 枚沿用旧键，剩下 13 枚应有节点键");
+        assert_eq!(expected.len(), 17, "20 枚节点里 3 枚沿用旧键，剩下 17 枚应有节点键");
 
         for key in &expected {
             let n: i64 = c
@@ -265,7 +269,7 @@ mod tests {
         assert_eq!(grants, 0);
         // 只摘这一页：其余节点一条不少
         let remaining: i64 = c.query_row("SELECT count(*) FROM menu_nodes", [], |r| r.get(0)).unwrap();
-        assert_eq!(remaining, 16);
+        assert_eq!(remaining, 20);
         let tools: i64 = c
             .query_row(
                 "SELECT count(*) FROM menu_nodes

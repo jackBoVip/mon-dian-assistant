@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi } from 'vitest';
 import { QuizPage } from './QuizPage';
-import type { QuizLibraryRow } from '../lib/types';
+import type { QuizLibraryRow, QuizQuestionPage, QuizQuestionRow } from '../lib/types';
 import { PERM } from '../lib/permissions';
 import { useNotify } from '../state/notify';
+import { useLauncherNav } from '../state/launcherNav';
 
 const mocks = vi.hoisted(() => ({
   myPermissions: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   quizRenameLibrary: vi.fn(),
   quizDeleteLibrary: vi.fn(),
   quizReindex: vi.fn(),
+  quizLibraryQuestions: vi.fn(),
   quizAssistantStatus: vi.fn(),
   quizScreenPermission: vi.fn(),
 }));
@@ -32,6 +34,30 @@ function library(over: Partial<QuizLibraryRow> = {}): QuizLibraryRow {
     updatedAt: '2026-10-21T09:30:00.000Z',
     ...over,
   };
+}
+
+
+/** 一道题的最小可用形状：详情弹窗只读这几列。 */
+function question(seq: number): QuizQuestionRow {
+  return {
+    id: `q-${seq}`,
+    libraryId: 'lib-1',
+    seq,
+    qtype: 'single',
+    stem: `第 ${seq} 道题的题干`,
+    options: [],
+    answerDisplay: 'A',
+    tags: [],
+    confidence: 1,
+    issues: [],
+    sourceRef: null,
+  };
+}
+
+/** 按 offset/limit 出一页：后端那条 SQL 就是 `ORDER BY seq LIMIT/OFFSET`，测试要照同一个形状给。 */
+function questionPage(offset: number, limit: number): QuizQuestionPage {
+  const items = Array.from({ length: limit }, (_, k) => question(offset + k + 1));
+  return { items, total: 60 };
 }
 
 function renderPage() {
@@ -75,6 +101,10 @@ beforeEach(() => {
   mocks.quizRenameLibrary.mockResolvedValue(library({ name: '2026 检修题库' }));
   mocks.quizDeleteLibrary.mockResolvedValue(undefined);
   mocks.quizReindex.mockResolvedValue(128);
+  // 详情弹窗的逐题取数：默认给第 1 页那十条（只有点开题库的用例会走到这条查询）
+  mocks.quizLibraryQuestions.mockImplementation((_lib: string, offset: number, limit: number) =>
+    Promise.resolve(questionPage(offset, limit)),
+  );
   mocks.quizAssistantStatus.mockResolvedValue(assistantStatus());
   mocks.quizScreenPermission.mockResolvedValue({ supported: true, permission: 'granted', detail: null });
   useNotify.setState({ items: [] });
@@ -171,5 +201,73 @@ describe('题库页的台账与权限裁剪', () => {
       const items = useNotify.getState().items;
       expect(items[items.length - 1]?.text).toContain('128');
     });
+  });
+});
+
+describe('浮层「打开这道题」的落点', () => {
+  /**
+   * 落在题号所在的那一页，而不是永远从第 1 页开始。
+   *
+   * 判据取发往后端的 offset：`library_questions` 是 `ORDER BY seq LIMIT ? OFFSET ?`，
+   * 第 42 题的行下标是 41，10 条一页就是 offset 40。这个换算成立的前提是 seq 连续且没有单题删除，
+   * 换算本身在 `QuizLibraryDetail.pageOfSeq` 里，那条注释写了它依赖哪两件事。
+   */
+  it('导航到第 42 题：按题号算出页偏移，并把那道题标出来', async () => {
+    useLauncherNav.getState().clear();
+    renderPage();
+    await screen.findByText('2025 检修题库');
+
+    useLauncherNav.getState().open({ page: 'quiz', libraryId: 'lib-1', questionId: 'q-42', seq: 42 });
+    await waitFor(() => expect(mocks.quizLibraryQuestions).toHaveBeenCalledWith('lib-1', 40, 10));
+    expect(await screen.findByText('（搜索命中的那道题）')).toBeInTheDocument();
+    // 消费完必须清空：下一次手动打开题库不该还被这条旧导航拽到第 5 页
+    expect(useLauncherNav.getState().pending).toBeNull();
+  });
+
+  /**
+   * 反向那一半同样要紧：手动打开一份题库时 `detailFocus` 必须是 null。
+   * 留着上一次导航的 focus，就会拿上一份题库的题号去算这一份的页码——
+   * 界面停在第 5 页，而人以为它从第 1 页开始。
+   */
+  it('手动打开题库仍从第 1 页开始，不受刚才那次导航残留的影响', async () => {
+    useLauncherNav.getState().clear();
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: '查看 2025 检修题库 的题目' }));
+    await waitFor(() => expect(mocks.quizLibraryQuestions).toHaveBeenCalledWith('lib-1', 0, 10));
+    expect(screen.queryByText('（搜索命中的那道题）')).toBeNull();
+
+    // 先让浮层导航把第 5 页打开、再关掉，然后手动开：这次必须回到第 1 页
+    mocks.quizLibraryQuestions.mockClear();
+    useLauncherNav.getState().open({ page: 'quiz', libraryId: 'lib-1', questionId: 'q-42', seq: 42 });
+    await waitFor(() => expect(mocks.quizLibraryQuestions).toHaveBeenCalledWith('lib-1', 40, 10));
+    // 弹窗有关闭钮两枚（右上角图标与页脚那颗），点哪一枚都是同一条 onClose
+    const closeButtons = within(screen.getByRole('dialog')).getAllByRole('button', { name: '关闭' });
+    fireEvent.click(closeButtons[0]);
+
+    mocks.quizLibraryQuestions.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: '查看 2025 检修题库 的题目' }));
+    await waitFor(() => expect(mocks.quizLibraryQuestions).toHaveBeenCalledWith('lib-1', 0, 10));
+    expect(screen.queryByText('（搜索命中的那道题）')).toBeNull();
+  });
+
+  /** 清单还是异步来的：导航到达时那份题库还没列出来，不能拿一个查不到的 libraryId 去开弹窗。 */
+  it('题库清单未到齐时先攥着目标，到齐了再开', async () => {
+    useLauncherNav.getState().clear();
+    // 清单挂起：改 mock 让已 settled 的查询重新取数是做不到的，只能真的让它晚到
+    let release: (rows: QuizLibraryRow[]) => void = () => {};
+    mocks.quizLibraries.mockReturnValue(new Promise((resolve) => { release = resolve }));
+    renderPage();
+    await waitFor(() => expect(mocks.quizLibraries).toHaveBeenCalled());
+
+    useLauncherNav.getState().open({ page: 'quiz', libraryId: 'lib-1', questionId: 'q-42', seq: 42 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mocks.quizLibraryQuestions).not.toHaveBeenCalled();
+    // 载荷已经消费了，但目标攥在页面里等清单——弹窗一帧都没开
+    expect(useLauncherNav.getState().pending).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    act(() => release([library()]));
+    await waitFor(() => expect(mocks.quizLibraryQuestions).toHaveBeenCalledWith('lib-1', 40, 10));
+    expect(await screen.findByText('（搜索命中的那道题）')).toBeInTheDocument();
   });
 });

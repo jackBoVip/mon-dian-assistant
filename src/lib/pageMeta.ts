@@ -2,10 +2,13 @@ import type { IconName } from '../components/ui/icons';
 import { PERM } from './permissions';
 
 /**
- * 主窗口十三个落点。
+ * 主窗口十六个落点。
  * - accounts：外部系统账号台账；
  * - quiz：题库与答题助手（一级入口，与账号中心同级）；
- * - users/roles/menus/permissions/audit：顶部「系统管理」下的五个二级页，左侧竖排导航；
+ * - notes：个人笔记（一级入口，与账号中心同级）；
+ * - html：页面库（一级「工具」入口；右栏用嵌入的子 webview 直接跑，脚本在别处也可用）；
+ * - release：「任务中心」下的第一枚二级页（微服务发布），左侧竖排导航；顶栏不给它胶囊，从快速启动浮层进；
+ * - users/roles/menus/permissions/audit：右上角齿轮下拉里的五个系统管理页，进去后左侧竖排导航；
  * - security/appearance/backup/update/tools：齿轮「设置」下拉第一组的五个独立页；
  * - launcher：齿轮下拉第二组的工具页。
  * 本文件只保留「页面名 / 说明 / 图标 / 所需权限」这张静态表；入口是否出现由
@@ -14,6 +17,9 @@ import { PERM } from './permissions';
 export type PageKey =
   | 'accounts'
   | 'quiz'
+  | 'notes'
+  | 'html'
+  | 'release'
   | 'users'
   | 'roles'
   | 'menus'
@@ -28,7 +34,13 @@ export type PageKey =
 
 export type AdminPageKey = Extract<PageKey, 'users' | 'roles' | 'menus' | 'permissions' | 'audit'>;
 export type SettingsPageKey = Extract<PageKey, 'security' | 'appearance' | 'backup' | 'update' | 'tools'>;
-export type TopKey = 'accounts' | 'quiz' | 'system';
+export type TaskPageKey = Extract<PageKey, 'release'>;
+/**
+ * 顶栏胶囊的四枚一级页。
+ * 「任务中心」与「系统管理」不再占位（交付方 2026-11-02）：前者只从快速启动浮层进，
+ * 后者的五枚二级页并进右上角齿轮。所以这里剩下的成员必须与 lib/menuTree.ts 推导出的那四枚一致。
+ */
+export type TopKey = 'accounts' | 'quiz' | 'notes' | 'html';
 export type GearPageKey = SettingsPageKey | Extract<PageKey, 'launcher'>;
 
 export interface PageMeta {
@@ -51,6 +63,18 @@ export const PAGE_META: Record<PageKey, PageMeta> = {
   quiz: {
     label: '题库',
     desc: '导入多份题库并管理题目；答题助手在光标处识别题干后跨题库检索答案，可限定只查其中几份。',
+  },
+  notes: {
+    label: '笔记',
+    desc: '个人笔记按使用者隔离，正文与图片都存在本机保险库、解锁后才能读写；可插入表格、代码块与图片。单篇导出 Markdown（图片内联），全部导出 zip 备份。',
+  },
+  html: {
+    label: '页面库',
+    desc: '把 HTML 粘进来、起个标题存好，左侧列表、右侧直接可用：脚本、图片与 CDN 资源照常运行，但页面拿不到本应用的任何命令。想让页面单独占一扇窗（或放到另一块屏幕）时点「运行脚本」。',
+  },
+  release: {
+    label: '微服务发布',
+    desc: '从发布说明里读出服务与目标镜像，先取回线上版本再逐项改镜像；生产环境那一发要单独的生产发布权限，并会逐条核对镜像。',
   },
   users: {
     label: '用户管理',
@@ -99,14 +123,19 @@ export const PAGE_META: Record<PageKey, PageMeta> = {
 };
 
 /**
- * 十三个落点各自的权限门槛。
- * 左上角入口（accounts）与「系统管理」二级页还额外受菜单节点与父级菜单键约束，
+ * 十六个落点各自的权限门槛。
+ * 左上角入口（accounts）、「任务中心」与「系统管理」二级页还额外受菜单节点与父级菜单键约束，
  * 这部分在 menuTree.ts 里叠加，不写进这张表。
  */
 export const PAGE_REQUIRES: Record<PageKey, string[]> = {
   accounts: [PERM.MENU_ACCOUNTS],
   // 一级入口键由 list_menu_nodes 下发，这里只钉页面本身的能力门槛。
   quiz: [PERM.QUIZ_LIBRARY_READ],
+  notes: [PERM.NOTES_READ],
+  // 页面库同样是一级入口：入口键由菜单节点下发，页面本身只要求能读页面。
+  html: [PERM.HTML_PAGE_READ],
+  // 入口键同样由菜单节点下发；页面本身要求能读发布信息与运行历史。
+  release: [PERM.TASK_RELEASE_VIEW],
   users: [PERM.SYS_USER_READ],
   roles: [PERM.SYS_ROLE_MANAGE],
   menus: [PERM.SYS_ROLE_MANAGE],
@@ -125,6 +154,9 @@ export const PAGE_REQUIRES: Record<PageKey, string[]> = {
 export const PAGE_ICONS: Record<PageKey, IconName> = {
   accounts: 'database',
   quiz: 'fileSheet',
+  notes: 'notebookPen',
+  html: 'code',
+  release: 'rocket',
   users: 'users',
   roles: 'shield',
   menus: 'listTree',
@@ -138,7 +170,12 @@ export const PAGE_ICONS: Record<PageKey, IconName> = {
   launcher: 'zap',
 };
 
-/** 系统管理左栏五项（顺序即默认顺序；实际渲染顺序由 menu_nodes 的 sort_order 决定）。 */
+/** 「任务中心」左栏：今天是「微服务发布」一枚，后续任务按同一结构追加。 */
+export const TASK_ITEMS: NavItem<TaskPageKey>[] = [
+  { key: 'release', ...PAGE_META.release, icon: PAGE_ICONS.release, requires: PAGE_REQUIRES.release },
+];
+
+/** 系统管理五页（齿轮下拉最后一组，进去后是左侧竖排导航；顺序由 menu_nodes 的 sort_order 决定）。 */
 export const ADMIN_ITEMS: NavItem<AdminPageKey>[] = [
   { key: 'users', ...PAGE_META.users, icon: PAGE_ICONS.users, requires: PAGE_REQUIRES.users },
   { key: 'roles', ...PAGE_META.roles, icon: PAGE_ICONS.roles, requires: PAGE_REQUIRES.roles },
@@ -186,9 +223,14 @@ export const UTILITY_ITEMS: NavItem<'launcher'>[] = [
 ];
 
 const ADMIN_KEYS = new Set<string>(ADMIN_ITEMS.map((item) => item.key));
+const TASK_KEYS = new Set<string>(TASK_ITEMS.map((item) => item.key));
 
 export function isAdminPage(page: PageKey): page is AdminPageKey {
   return ADMIN_KEYS.has(page);
+}
+
+export function isTaskPage(page: PageKey): page is TaskPageKey {
+  return TASK_KEYS.has(page);
 }
 
 export function isSettingsPage(page: PageKey): page is SettingsPageKey {

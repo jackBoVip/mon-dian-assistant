@@ -1,0 +1,784 @@
+/* ========================================================================
+ * 笔记编辑器（TipTap）的版式与语法配色。
+ *
+ * 为什么单开一份而不并进 global.css：global.css 由 `globalCssEquivalence.test.ts`
+ * 逐声明与基线对账，往里加东西等于改基线；这一份只被 NotesPage 引入。
+ * 颜色一条都不写死：全部从当前主题令牌派生，四套主题自动跟随。
+ *
+ * 语法配色的档位（lowlight 注入的是 .hljs-* 的 inline decoration class）：
+ * 不新增 --t-code-* 令牌——themeTokens.ts 与 tokens.css 是逐枚对账的，加一枚要两边同步，
+ * 而这里能复用的色相已经够分：主色=关键字、成功色=字符串、警告色=数字、
+ * 强调色=类型与函数、危险色=标签、次要文字色=注释与标点。
+ * ==================================================================== */
+
+/* ------------------------------------------------------------ 两栏骨架
+ * 交付方 2026-10-30 的口径：简约大气。左栏不再套一层玻璃盒（它只是导航，一条细分隔线就够），
+ * 整屏只有右边那一枚卡片承载内容；空态也不再是"虚线框套虚线框"。
+ */
+.notes-shell {
+  display: flex;
+  flex: 1;
+  gap: var(--spacing-5);
+  min-height: 0;
+}
+
+.notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  width: 260px;
+  min-width: 210px;
+  min-height: 0;
+  padding: 0 var(--spacing-4) 0 0;
+  border-right: 1px solid var(--t-border-subtle);
+}
+
+.notes-list__items {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.notes-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-1);
+  border-radius: var(--radius-sm);
+}
+
+/* 当前行：抬一层实心面 + 左沿一枚主色条，比整块反白安静 */
+.notes-item.is-active {
+  background: var(--t-surface-elevated);
+  box-shadow: inset 2px 0 0 var(--t-primary);
+}
+
+.notes-item__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: var(--spacing-2) var(--spacing-3);
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+}
+
+.notes-item__main:hover {
+  background: var(--row-hover);
+}
+
+.notes-item__title {
+  overflow: hidden;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--t-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-item.is-active .notes-item__title {
+  color: var(--t-primary);
+}
+
+.notes-item__snippet {
+  overflow: hidden;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--t-text-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-item__time {
+  font-size: 0.6875rem;
+  color: var(--t-text-muted);
+}
+
+/* 删除那颗只在悬停或键盘聚焦到这一行时露面：平时列表只剩标题、摘要、时间 */
+.notes-item .btn-mini {
+  margin-top: var(--spacing-2);
+  opacity: 0;
+}
+
+.notes-item:hover .btn-mini,
+.notes-item:focus-within .btn-mini {
+  opacity: 1;
+}
+
+.notes-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 空态：一枚图标 + 两句轻文案，居中不描边 */
+.notes-blank {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-6);
+  color: var(--t-text-muted);
+  text-align: center;
+}
+
+.notes-blank--inline {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  padding: var(--spacing-4) var(--spacing-3);
+  font-size: 0.8125rem;
+}
+
+.notes-blank__title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--t-text-body);
+}
+
+.notes-blank__hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------------ 编辑区 */
+.note-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  min-height: 0;
+  padding: var(--spacing-4) var(--spacing-5) var(--spacing-5);
+  background: var(--t-surface);
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-lg);
+}
+
+.note-editor__head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing-3);
+}
+
+.note-title-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  color: var(--t-text);
+  font-size: 1.25rem;
+  font-weight: 600;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--t-border-subtle);
+}
+
+.note-title-input:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--t-primary);
+  outline-offset: 2px;
+}
+
+.note-title-input::placeholder {
+  color: var(--t-text-muted);
+}
+
+.note-editor__meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+}
+
+.note-editor__status {
+  font-size: 0.75rem;
+  color: var(--t-text-muted);
+}
+
+/* 稿子右侧那枚「保存」：即时落库那颗按钮，尺寸与图标钮同一档 */
+.note-save-btn {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 var(--spacing-4);
+  font-size: 0.8125rem;
+}
+
+/* 保存失败那句属于"报错"这一类语境，才配用危险色 */
+.note-editor__status--error {
+  color: var(--t-danger);
+}
+
+/* 工具栏是稿子里那条通栏浅带：负 margin 抵消卡片左右内边距，让它一直铺到卡片两边。
+ * 窄窗口下这一行横向滚动，而不是折成两三行——折行会把带子撑高，把正文整个往下推。 */
+.note-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0 calc(-1 * var(--spacing-5));
+  padding: 4px var(--spacing-5);
+  overflow-x: auto;
+  /* 带的深浅用 --t-text 的 6% 叠色：浅色主题下它是灰、暗色主题下它是亮灰，
+     不用为四套主题各写一档，也不会像 --t-surface-sunken 那样在玻璃主题上看不出来。 */
+  background: color-mix(in srgb, var(--t-text) 6%, transparent);
+  border-top: 1px solid var(--t-divider);
+  border-bottom: 1px solid var(--t-divider);
+}
+
+.note-table-bubble {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.note-table-bubble {
+  align-self: flex-start;
+  padding: var(--spacing-1) var(--spacing-2);
+  background: var(--t-surface-elevated);
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+.note-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--t-text-body);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+
+.note-tool--menu,
+.note-tool--text,
+.note-tool--color {
+  width: auto;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+/* ▾ 只是"点开还有东西"的记号，比图标本身轻一档 */
+.note-tool__caret {
+  color: var(--t-text-muted);
+}
+
+/* 当前选中的那一档色挂在触发钮下面：稿子里「A」下面那条约 3px 的色条，不打开也知道现在是什么色 */
+.note-tool__ink {
+  width: 14px;
+  height: 3px;
+  border: 0;
+  border-radius: 1px;
+}
+
+.note-tool--small {
+  width: 24px;
+  height: 24px;
+}
+
+.note-tool:hover:not(:disabled) {
+  background: var(--row-hover);
+}
+
+.note-tool.is-active {
+  color: var(--t-primary);
+  background: var(--t-surface-elevated);
+  border-color: var(--t-border-strong);
+}
+
+.note-tool:disabled {
+  color: var(--t-text-muted);
+  cursor: not-allowed;
+}
+
+.note-toolbar__gap {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--t-divider);
+}
+
+/* 属性下拉在稿子里是「纯文字 + ▾」，不是输入框那种带边框的底：这里只换皮，行为仍是 Radix Select。
+   宽度必须收回来——`.select` 的 width:100% 会把这一行撑成整块，稿子里那两个下拉只占自己那几个字。 */
+.note-toolbar .note-select {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  color: var(--t-text-body);
+  font-size: 0.8125rem;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-xs);
+  box-shadow: none;
+}
+
+.note-toolbar .note-select:hover:not(:disabled) {
+  background: var(--row-hover);
+  border-color: transparent;
+}
+
+/* 「插入」是这一行唯一的彩色入口：实心圆底 + 白色加号，与稿子一致 */
+.note-insert-badge {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  background: var(--t-primary);
+  color: var(--t-text-inverse);
+  border-radius: var(--radius-full);
+}
+
+/* 色板里那一枚色块：值就是内容里要存的那档令牌引用，所见即所得 */
+.note-swatch {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 1px solid var(--t-border-strong);
+  border-radius: var(--radius-xs);
+}
+
+.note-swatch--none {
+  border-style: dashed;
+  background: none;
+}
+
+/* 只能读的角色点开的菜单：把"这里没有可做的动作"说明白，不给一排按了不动的项 */
+.note-menu__notice {
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--t-text-muted);
+}
+
+.note-emoji-block {
+  padding: var(--spacing-2) var(--spacing-3);
+}
+
+.note-emoji-block__title {
+  margin: 0 0 6px;
+  font-size: 0.75rem;
+  color: var(--t-text-muted);
+}
+
+.note-emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.note-emoji {
+  padding: 2px;
+  font-size: 1rem;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+
+.note-emoji:hover {
+  background: var(--row-hover);
+}
+
+.note-body {
+  display: flex;
+  flex: 1;
+  gap: var(--spacing-3);
+  min-height: 0;
+}
+
+/* EditorContent 包了一层自动高度的 div：不把它也变成有界的一列，
+   里面 `.notes-prose` 那条 overflow-y:auto 就是死的——正文一长直接顶穿卡片，
+   把标题行与工具栏挤没（交付方 2026-10-31 那张长代码块照片就是这个）。 */
+.note-body > * {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.note-link-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.note-link-form__actions {
+  display: flex;
+  gap: var(--spacing-2);
+}
+
+/* ------------------------------------------------------------ 正文版式 */
+/* 正文按稿纸排版：限一枚 760px 的版心居中，长行不贴着窗口边缘 */
+.notes-prose {
+  flex: 1;
+  width: 100%;
+  max-width: 760px;
+  min-height: 0;
+  margin: 0 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--spacing-4) 2px var(--spacing-6);
+  color: var(--t-text);
+  font-family: var(--font-sans);
+  line-height: 1.7;
+  outline: none;
+}
+
+.notes-prose h1,
+.notes-prose h2,
+.notes-prose h3 {
+  margin: 1.2em 0 0.4em;
+  color: var(--t-text);
+  line-height: 1.3;
+}
+
+.notes-prose h1 { font-size: 1.6em; }
+.notes-prose h2 { font-size: 1.3em; }
+.notes-prose h3 { font-size: 1.1em; }
+
+.notes-prose > *:first-child,
+.notes-prose h1:first-child,
+.notes-prose h2:first-child,
+.notes-prose h3:first-child {
+  margin-top: 0;
+}
+
+.notes-prose p {
+  margin: 0.5em 0;
+}
+
+.notes-prose ul,
+.notes-prose ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.notes-prose ul { list-style: disc; }
+.notes-prose ol { list-style: decimal; }
+.notes-prose li { margin: 0.2em 0; }
+.notes-prose li p { margin: 0; }
+
+.notes-prose blockquote {
+  margin: 0.8em 0;
+  padding: 0.2em 0 0.2em 1em;
+  color: var(--t-text-body);
+  border-left: 3px solid var(--t-primary);
+}
+
+.notes-prose hr {
+  margin: 1.2em 0;
+  border: 0;
+  border-top: 1px solid var(--t-border-strong);
+}
+
+.notes-prose a {
+  color: var(--t-primary);
+  text-decoration: underline;
+  cursor: text;
+}
+
+.notes-prose code {
+  padding: 1px 4px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--t-surface-sunken);
+  border: 1px solid var(--t-border-subtle);
+  border-radius: var(--radius-xs);
+}
+
+.notes-prose pre {
+  margin: 0.8em 0;
+  padding: var(--spacing-3);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  line-height: 1.6;
+  background: var(--t-surface-sunken);
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+}
+
+.notes-prose pre code {
+  padding: 0;
+  font-size: inherit;
+  background: none;
+  border: 0;
+}
+
+.notes-prose mark {
+  padding: 1px 2px;
+  color: var(--t-text);
+  background: color-mix(in srgb, var(--t-star) 45%, transparent);
+  border-radius: var(--radius-xs);
+}
+
+.notes-prose table {
+  width: 100%;
+  margin: 0.8em 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+.notes-prose th,
+.notes-prose td {
+  box-sizing: border-box;
+  min-width: 1em;
+  padding: 6px 8px;
+  border: 1px solid var(--t-border-strong);
+  vertical-align: top;
+}
+
+.notes-prose th {
+  font-weight: 600;
+  text-align: center;
+  background: var(--t-surface-sunken);
+}
+
+.notes-prose .selectedCell {
+  background: color-mix(in srgb, var(--t-primary) 12%, transparent);
+}
+
+.notes-prose .note-image {
+  position: relative;
+  display: block;
+  margin: 0.8em 0;
+}
+
+.notes-prose .note-image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+.notes-prose .ProseMirror-selectednode .note-image img,
+.notes-prose .note-image.ProseMirror-selectednode img {
+  outline: 2px solid var(--t-primary);
+  outline-offset: 2px;
+}
+
+.note-image__missing {
+  display: inline-block;
+  padding: var(--spacing-3);
+  font-size: 0.8125rem;
+  color: var(--t-text-muted);
+  background: var(--t-surface-sunken);
+  border: 1px dashed var(--t-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.note-image__remove {
+  position: absolute;
+  top: var(--spacing-1);
+  right: var(--spacing-1);
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  color: var(--t-text-inverse);
+  /* 这颗"移除"把图片节点从正文里去掉，属于不可逆那一档 */
+  background: var(--t-danger);
+  border: 0;
+  border-radius: var(--radius-btn);
+  cursor: pointer;
+}
+
+/* 占位符：空的首段与空节点上挂 data-placeholder（Placeholder 扩展注入） */
+.notes-prose .is-editor-empty:first-child::before,
+.notes-prose .is-empty::before {
+  float: left;
+  height: 0;
+  content: attr(data-placeholder);
+  color: var(--t-text-muted);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------ 语法着色 */
+.notes-prose .hljs-keyword,
+.notes-prose .hljs-literal,
+.notes-prose .hljs-built_in {
+  color: var(--t-primary);
+}
+
+.notes-prose .hljs-string,
+.notes-prose .hljs-regexp,
+.notes-prose .hljs-addition {
+  color: var(--t-success);
+}
+
+.notes-prose .hljs-number,
+.notes-prose .hljs-symbol,
+.notes-prose .hljs-bullet {
+  color: var(--t-warning);
+}
+
+.notes-prose .hljs-comment,
+.notes-prose .hljs-quote {
+  color: var(--t-text-muted);
+  font-style: italic;
+}
+
+.notes-prose .hljs-title,
+.notes-prose .hljs-title.function_,
+.notes-prose .hljs-title.class_,
+.notes-prose .hljs-type,
+.notes-prose .hljs-class {
+  color: var(--t-accent);
+}
+
+/* 标签/选择器取正文色：危险色在这一页只留给"报错与不可逆"，不拿来当第六种语法色。 */
+.notes-prose .hljs-tag,
+.notes-prose .hljs-name,
+.notes-prose .hljs-selector-tag,
+.notes-prose .hljs-selector-class,
+.notes-prose .hljs-deletion {
+  color: var(--t-text);
+}
+
+.notes-prose .hljs-attr,
+.notes-prose .hljs-attribute,
+.notes-prose .hljs-variable,
+.notes-prose .hljs-template-variable,
+.notes-prose .hljs-params {
+  color: var(--t-text-body);
+}
+
+.notes-prose .hljs-meta,
+.notes-prose .hljs-punctuation,
+.notes-prose .hljs-section {
+  color: var(--t-text-muted);
+}
+
+.notes-prose .hljs-emphasis { font-style: italic; }
+.notes-prose .hljs-strong { font-weight: 700; }
+
+/* ------------------------------------------------------------ 代码块角标
+ * 这层 div 只干一件事：给右上角那两枚钮一个定位参照。pre 的版式仍走上面那条 `.notes-prose pre`。
+ * 静置时不占视觉（opacity 0），悬停或键盘进到块里才露面——与左栏那枚删除钮同一套做法。
+ */
+.notes-prose .note-code {
+  position: relative;
+}
+
+.note-code__tools {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--t-surface-elevated);
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
+.note-code:hover .note-code__tools,
+.note-code:focus-within .note-code__tools {
+  opacity: 1;
+}
+
+/* ------------------------------------------------------------ 代码块行号
+ * 行号是行首的 widget 装饰：跟着文本走，宽度固定成一位数与三位数都不挪正文。
+ * 它不该被选中，也不该被读屏念出来（画它的时候已经挂了 aria-hidden）。
+ */
+.notes-prose .note-code__no {
+  display: inline-block;
+  width: 2.5em;
+  margin-right: 0.75em;
+  color: var(--t-text-muted);
+  text-align: right;
+  user-select: none;
+}
+
+/* ------------------------------------------------------------ 任务列表
+ * 勾由 TaskItem 的 node view 画。只读角色点它，node view 会把勾退回原状（不改文档），
+ * 所以这一档不需要额外收掉指针。
+ */
+.notes-prose ul[data-type='taskList'] {
+  margin: 0.6em 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notes-prose ul[data-type='taskList'] > li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+}
+
+.notes-prose ul[data-type='taskList'] > li > label {
+  flex-shrink: 0;
+  margin-top: 0.25em;
+}
+
+.notes-prose ul[data-type='taskList'] > li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 勾自己画：浏览器那颗复选框按 color-scheme 出图，本应用没设这一档，
+   暗色主题下它会画成一块白方盒，勾没勾都读不出来。 */
+.notes-prose input[type='checkbox'] {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  background: var(--t-surface-elevated);
+  border: 1.5px solid var(--t-border-strong);
+  border-radius: 3px;
+  appearance: none;
+}
+
+.notes-prose input[type='checkbox']:checked {
+  background: var(--t-primary);
+  border-color: var(--t-primary);
+}
+
+.notes-prose input[type='checkbox']:checked::after {
+  width: 8px;
+  height: 4px;
+  border-left: 2px solid var(--t-text-inverse);
+  border-bottom: 2px solid var(--t-text-inverse);
+  content: '';
+  transform: rotate(-45deg) translate(0, -1px);
+}
+
+/* 勾完的那一行：划掉而不是变灰，与"这件事做完了"的读法一致 */
+.notes-prose ul[data-type='taskList'] > li[data-checked='true'] > div {
+  color: var(--t-text-muted);
+  text-decoration: line-through;
+}
+
+/* 关掉动效那一档（界面外观页的开关）下，笔记里不补额外的过渡 */
+@media (prefers-reduced-motion: reduce) {
+  .notes-item__main,
+  .note-tool,
+  .note-emoji {
+    transition: none;
+  }
+}

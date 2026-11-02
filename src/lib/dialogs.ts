@@ -35,6 +35,14 @@ export async function openFile(options: FileDialogOptions = {}): Promise<string 
   return typeof picked === 'string' ? picked : null;
 }
 
+/** 选择多个文件；用户取消返回空数组。笔记导入一次挑多篇 .md 走这条。 */
+export async function openFiles(options: FileDialogOptions = {}): Promise<string[]> {
+  if (!isTauri()) throw notTauriError();
+  const picked = await open({ ...options, multiple: true, directory: false });
+  if (Array.isArray(picked)) return picked.filter((p): p is string => typeof p === 'string');
+  return typeof picked === 'string' ? [picked] : [];
+}
+
 /** 选择单个目录；用户取消返回 null。只负责选路径，不读写任何文件。 */
 export async function openDirectory(options: FileDialogOptions = {}): Promise<string | null> {
   if (!isTauri()) throw notTauriError();

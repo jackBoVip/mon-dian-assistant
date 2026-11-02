@@ -1,7 +1,9 @@
 import type { MenuNode } from '../lib/types';
 
 /**
- * 与 `migrations/0009_menu_nodes.sql`（经 0011 移除导入/导出页、0014 加进外部工具、0015 加进题库后）的种子逐行对齐的 16 枚节点。
+ * 与迁移种子逐行对齐的 20 枚节点：0009 建表并种 15 枚，0011 摘掉导入/导出页，
+ * 0014 加进外部工具、0015 加进题库、0016 加进任务中心（一级分组 + 微服务发布）、
+ * 0017 加进笔记（一级页）、0018 加进工具（一级页，页面库）。
  * 测试夹具只改 status / label / sortOrder 来表达场景，节点身份保持稳定。
  * permKey 与 `menu::perm_key_for` 同源：三枚旧键沿用，其余为 menu.node.<nodeKey>。
  */
@@ -31,6 +33,18 @@ export const SEED_MENU_NODES: MenuNode[] = [
     permKey: 'menu.node.top.quiz',
   },
   {
+    id: 'mn-top-notes',
+    nodeKey: 'top.notes',
+    parentId: null,
+    label: '笔记',
+    pageKey: 'notes',
+    kind: 'page',
+    builtin: true,
+    status: 'active',
+    sortOrder: 16,
+    permKey: 'menu.node.top.notes',
+  },
+  {
     id: 'mn-top-system',
     nodeKey: 'top.system',
     parentId: null,
@@ -41,6 +55,30 @@ export const SEED_MENU_NODES: MenuNode[] = [
     status: 'active',
     sortOrder: 20,
     permKey: 'menu.system',
+  },
+  {
+    id: 'mn-top-tasks',
+    nodeKey: 'top.tasks',
+    parentId: null,
+    label: '任务中心',
+    pageKey: null,
+    kind: 'group',
+    builtin: true,
+    status: 'active',
+    sortOrder: 17,
+    permKey: 'menu.node.top.tasks',
+  },
+  {
+    id: 'mn-top-tools',
+    nodeKey: 'top.tools',
+    parentId: null,
+    label: '工具',
+    pageKey: 'html',
+    kind: 'page',
+    builtin: true,
+    status: 'active',
+    sortOrder: 25,
+    permKey: 'menu.node.top.tools',
   },
   {
     id: 'mn-gear-settings',
@@ -197,6 +235,18 @@ export const SEED_MENU_NODES: MenuNode[] = [
     status: 'active',
     sortOrder: 10,
     permKey: 'menu.quick_launcher',
+  },
+  {
+    id: 'mn-task-release',
+    nodeKey: 'task.release',
+    parentId: 'mn-top-tasks',
+    label: '微服务发布',
+    pageKey: 'release',
+    kind: 'page',
+    builtin: true,
+    status: 'active',
+    sortOrder: 10,
+    permKey: 'menu.node.task.release',
   },
 ];
 

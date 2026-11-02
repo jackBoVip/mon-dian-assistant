@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { QuizAssistantDialog } from '../components/quiz/QuizAssistantDialog';
@@ -15,6 +15,7 @@ import { api } from '../lib/api';
 import { invalidateQuizLibraries, queryKeys } from '../lib/queryClient';
 import { toNormalisedError } from '../lib/errors';
 import { notify } from '../state/notify';
+import { useLauncherNav } from '../state/launcherNav';
 import type { QuizLibraryRow } from '../lib/types';
 
 /**
@@ -41,6 +42,42 @@ export function QuizPage() {
   const [deleting, setDeleting] = useState<QuizLibraryRow | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  /** 详情弹窗里要落在哪一道题。只在浮层导航来时带值，手动打开必须是 null。 */
+  const [detailFocus, setDetailFocus] = useState<{ questionId: string; seq: number } | null>(null);
+  /** 导航到达、但那一份题库还没在异步来的清单里出现时先攥着的目标。 */
+  const [navTarget, setNavTarget] = useState<{ libraryId: string; questionId: string; seq: number } | null>(null);
+
+  function openLibrary(lib: QuizLibraryRow, focus: { questionId: string; seq: number } | null = null) {
+    setViewing(lib);
+    setDetailFocus(focus);
+  }
+
+  function closeLibrary() {
+    setViewing(null);
+    setDetailFocus(null);
+  }
+
+  /**
+   * 浮层「打开这道题」的落点：先按 libraryId 认出那一份题库，再开弹窗并落在题号所在的那一页。
+   *
+   * 清单是异步来的，导航到达时 `rows` 可能还是空的，所以目标先攥在 `navTarget` 里，
+   * 等那一份题库真的出现再开——拿一个清单里查不到的 libraryId 直接开弹窗，
+   * 屏幕上会亮一句「这份题库里没有题目」，那是个比不开更糟的假象。
+   */
+  const pendingNav = useLauncherNav((s) => s.pending);
+  useEffect(() => {
+    if (!pendingNav || pendingNav.page !== 'quiz') return;
+    useLauncherNav.getState().clear();
+    setNavTarget({ libraryId: pendingNav.libraryId, questionId: pendingNav.questionId, seq: pendingNav.seq });
+  }, [pendingNav]);
+
+  useEffect(() => {
+    if (navTarget === null) return;
+    const lib = rows.find((row) => row.id === navTarget.libraryId);
+    if (!lib) return;
+    openLibrary(lib, { questionId: navTarget.questionId, seq: navTarget.seq });
+    setNavTarget(null);
+  }, [navTarget, rows]);
 
   const onError = (raw: unknown) => notify('danger', toNormalisedError(raw).message);
 
@@ -137,13 +174,13 @@ export function QuizPage() {
           onRetry={() => void libraries.refetch()}
           canManage={canManage}
           pending={remove.isPending || rename.isPending}
-          onView={setViewing}
+          onView={(lib) => openLibrary(lib)}
           onRename={startRename}
           onDelete={setDeleting}
         />
       </div>
 
-      <QuizLibraryDetail library={viewing} onClose={() => setViewing(null)} />
+      <QuizLibraryDetail library={viewing} focus={detailFocus} onClose={closeLibrary} />
 
       <QuizImportWizard open={importOpen} onClose={() => setImportOpen(false)} />
 

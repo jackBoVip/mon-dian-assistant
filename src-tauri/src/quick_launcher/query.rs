@@ -6,8 +6,7 @@
 //! - 动作走与主界面相同的 `commands` 授权路径。
 
 use super::parser::{self, ParsedQuery};
-use super::search::{SearchDoc, SearchIndex};
-use crate::error::Result;
+use super::search::{MatchKind, SearchDoc, SearchIndex};
 use serde::{Deserialize, Serialize};
 
 /// 快捷动作。前端按此渲染，后端仍会二次校验权限。
@@ -23,9 +22,26 @@ pub enum QuickAction {
     SetDefault,
 }
 
+/// 一条命中来自哪一类内容。前端按它选行版式与 Enter 落点，`quick_reveal` 也按它分派。
+///
+/// `tool` 是「工具」页里的那些 HTML 页面（page_key=`html`）；`task` 是任务中心的任务定义。
+/// 序列化线格式是 snake_case，与前端 `QuickSource` 同一份字面量，由 `ipcContract.test.ts` 比两侧。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuickSource {
+    Account,
+    Note,
+    Quiz,
+    Tool,
+    Task,
+}
+
+/// 保险库凭据命中。字段与扩展前的 `QuickResult` 逐一对应，一个没减：
+/// `quick_action` 那条链（打开/填充/复制用户名/复制密码/查看详情/设为默认）读的就是这些键，
+/// 前端的 `ACTION_LABELS` 与跨窗载荷也都钉在同一份形状上。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QuickResult {
+pub struct AccountHit {
     pub target_id: String,
     pub item_id: String,
     pub system_name: String,
@@ -39,7 +55,155 @@ pub struct QuickResult {
     pub favorite: bool,
     pub credential_count_on_target: usize,
     pub actions: Vec<QuickAction>,
-    pub match_kind: &'static str,
+    pub match_kind: MatchKind,
+}
+
+/// 笔记命中：标题 + 正文去标签摘要，与笔记页左栏同一份内容形状。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteHit {
+    pub note_id: String,
+    pub title: String,
+    pub snippet: String,
+    pub updated_at: String,
+    pub match_kind: MatchKind,
+}
+
+/// 题库命中：定位用的是 `libraryId` + `seq`，落点页按 seq 算出该翻到第几页。
+///
+/// 刻意不带 `answerDisplay` 与选项：浮层是一枚置顶窗，答案跟着题干一起飘在桌面上，
+/// 不是这道题该有的暴露面。要看答案的路径是落到题库页里那一行。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuizHit {
+    pub question_id: String,
+    pub library_id: String,
+    pub library_name: String,
+    pub seq: i64,
+    pub qtype: String,
+    pub stem: String,
+    pub match_kind: MatchKind,
+}
+
+/// 工具（HTML 页面）命中：只有标题。正文不参与检索的口径见 `html_pages::store::search`。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolHit {
+    pub page_id: String,
+    pub title: String,
+    pub updated_at: String,
+    pub match_kind: MatchKind,
+}
+
+/// 任务中心命中：一枚任务定义的一档环境。`env` 是 `test`/`prod`，中文标签只在前端 `ENVS` 里。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskHit {
+    pub task_key: String,
+    pub label: String,
+    pub env: String,
+    pub match_kind: MatchKind,
+}
+
+/// 一行结果。`tag = "source"` 是内部标签：序列化后就是 `{"source":"note","noteId":...}`，
+/// 前端按 `source` 判别后各走各的渲染与 Enter 分支。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum QuickHit {
+    Account(AccountHit),
+    Note(NoteHit),
+    Quiz(QuizHit),
+    Tool(ToolHit),
+    Task(TaskHit),
+}
+
+impl QuickHit {
+    pub fn source(&self) -> QuickSource {
+        match self {
+            QuickHit::Account(_) => QuickSource::Account,
+            QuickHit::Note(_) => QuickSource::Note,
+            QuickHit::Quiz(_) => QuickSource::Quiz,
+            QuickHit::Tool(_) => QuickSource::Tool,
+            QuickHit::Task(_) => QuickSource::Task,
+        }
+    }
+
+    /// 同一匹配等级内的固定先后：账号 → 笔记 → 题库 → 工具 → 任务中心。
+    ///
+    /// 同级**不跨源比时间**：账号行的同级顺序由设置
+    /// `quick_launcher_rank_recent_favorite` 决定（收藏 > 默认账号 > 最近使用，需求 line 294），
+    /// 让笔记的 `updated_at` 插进去就会把那条设置改掉；而"最近使用"与"最近编辑笔记"
+    /// 本来也不是同一个量，混在一起比不出一个能解释的次序。
+    /// 于是同级按源的固定顺序排，各源内部的既有顺序由稳定排序保留。
+    fn source_rank(&self) -> u8 {
+        match self.source() {
+            QuickSource::Account => 0,
+            QuickSource::Note => 1,
+            QuickSource::Quiz => 2,
+            QuickSource::Tool => 3,
+            QuickSource::Task => 4,
+        }
+    }
+
+    pub fn match_kind(&self) -> MatchKind {
+        match self {
+            QuickHit::Account(h) => h.match_kind,
+            QuickHit::Note(h) => h.match_kind,
+            QuickHit::Quiz(h) => h.match_kind,
+            QuickHit::Tool(h) => h.match_kind,
+            QuickHit::Task(h) => h.match_kind,
+        }
+    }
+}
+
+/// 平铺混排：先按匹配等级（完全 > 前缀 > 包含），同级按源顺序，最后截到 `limit`。
+///
+/// 传进来的每一段必须**已经按各自的规则排好**，这里只负责合并；`sort_by_key` 是稳定排序，
+/// 同等级同源的原序不会被打乱。
+pub fn merge_ranked(hits: Vec<QuickHit>, limit: usize) -> Vec<QuickHit> {
+    let mut hits = hits;
+    hits.sort_by_key(|h| (h.match_kind() as u8, h.source_rank()));
+    hits.truncate(limit);
+    hits
+}
+
+/// 保险库以外的四个源，每类各自先取这么多，合并后再截到设置里的全局上限。
+///
+/// 不跟全局上限同值是有意的：平铺混排先比匹配等级，账号那一类命中得多时能把整份预算占满，
+/// 那样「支持搜笔记/题库/工具/任务」就等于没兑现。每类先各留 5 条进合并池，
+/// 保证一次搜索里五类都有机会露头。
+pub const PER_SOURCE_LIMIT: usize = 5;
+
+/// 这条查询能不能扇出到保险库以外的四个源，能的话喂给它们哪个词。
+///
+/// 三个条件全过才有值，合成一个判据是因为分开写会给出两个互相矛盾的答案
+/// （`系统:OA` 是"无字段限定"吗？它字段限定得明明白白）：
+/// 1. **有真实条件**。空输入走的是"收藏/最近使用"那一档，那是保险库自己的推荐位，
+///    笔记没有收藏、任务没有最近使用，凑不出同一件事。
+/// 2. **没有任何字段限定**。`系统:OA`、`标签:生产` 里的字段名是保险库的列，
+///    笔记/题库/工具/任务都没有对应字段，硬套只会给出解释不了的命中。
+/// 3. **恰好一个条件**。多条件没有单个词可喂，而每类各实现一遍 AND 会得到四种形状的 AND
+///    （保险库是同一条记录上全命中，FTS 是分片 OR，LIKE 是多子句 AND）。
+///
+/// 第 2、3 条挡掉的查询不是静默降级：`SearchReply.vault_only` 会把它带到界面上说破，
+/// 否则"输入 系统:OA 之后笔记那一类整体消失"看起来就是坏了。
+pub fn fan_out_term(parsed: &ParsedQuery) -> Option<&str> {
+    if parsed.conditions.len() != 1 {
+        return None;
+    }
+    let cond = &parsed.conditions[0];
+    if cond.field != parser::Field::Any {
+        return None;
+    }
+    Some(cond.term.as_str())
+}
+
+/// 这次是不是"只搜了保险库"——有真实条件、却没扇出去（被字段限定或多条件挡下）。
+///
+/// 与 [`fan_out_term`] 成对：一个决定扇不扇，一个把"没扇"这件事说给界面听。
+/// 判据只能有一处，否则浮层的说明和实际搜了什么是两个来源，早晚会各说各话。
+pub fn is_vault_only(parsed: &ParsedQuery) -> bool {
+    !parsed.conditions.is_empty() && fan_out_term(parsed).is_none()
 }
 
 /// 用户名脱敏：保留首尾各 1 个字符，中间打点；短于 3 字符整体打点。
@@ -101,39 +265,43 @@ impl Default for ActionPolicy {
     }
 }
 
+/// 保险库那一条腿：在内存索引里查已解析好的查询。
+///
+/// 入参是 `&ParsedQuery` 而不是原始串：解析由命令层做一次，同一份结果还要用来判断
+/// "这条查询能不能扇出到另外四类"（见 [`fan_out_term`]），解析两遍等于给同一个问题留两处答案。
+///
 /// `show_recent_when_empty` 是设置 `quick_launcher_show_recent` 的当前值：需求 §285 要求"输入为空时可显示
 /// 最近使用项/收藏项（应由设置启用）"，所以关掉时空输入必须一条都不返回，而不是只让前端自己不去请求。
 ///
 /// `rank_recent_favorite` 是设置 `quick_launcher_rank_recent_favorite` 的当前值：需求 line 294 要求
 /// "完全匹配、前缀匹配、包含匹配、最近使用/收藏"里的最后一档**可配置**。它只影响同一匹配等级内部的先后，
 /// 永远不可能把 AND 过滤掉的记录排回来。
-pub fn search_unlocked(
+pub fn search_vault(
     index: &SearchIndex,
-    raw_query: &str,
+    parsed: &ParsedQuery,
     limit: usize,
     extension_ready: bool,
     policy: &ActionPolicy,
     show_recent_when_empty: bool,
     rank_recent_favorite: bool,
-) -> Result<Vec<QuickResult>> {
-    let parsed: ParsedQuery = parser::parse(raw_query)?;
+) -> Vec<AccountHit> {
     let hits = if parsed.conditions.is_empty() {
         if show_recent_when_empty {
             index
                 .defaults(limit)
                 .into_iter()
-                .map(|d| (d, super::search::MatchKind::Contains))
+                .map(|d| (d, MatchKind::Contains))
                 .collect()
         } else {
             // 空输入 + 设置关闭：不给任何保险库内容
             Vec::new()
         }
     } else {
-        index.search_ranked(&parsed, limit, &super::search::RankConfig { recent_favorite_first: rank_recent_favorite })
+        index.search_ranked(parsed, limit, &super::search::RankConfig { recent_favorite_first: rank_recent_favorite })
     };
-    Ok(hits
+    hits
         .into_iter()
-        .map(|(d, kind)| QuickResult {
+        .map(|(d, kind)| AccountHit {
             target_id: d.target_id.clone(),
             item_id: d.item_id.clone(),
             system_name: d.system_name.clone(),
@@ -146,14 +314,14 @@ pub fn search_unlocked(
             favorite: d.favorite,
             credential_count_on_target: d.credential_count_hint(),
             actions: allowed_actions(&d, extension_ready, policy),
-            match_kind: match kind {
-                super::search::MatchKind::Exact => "exact",
-                super::search::MatchKind::Prefix => "prefix",
-                super::search::MatchKind::Contains => "contains",
-            },
+            match_kind: kind,
         })
-        .collect())
+        .collect()
 }
+
+/// 保险库以外的四类内容（笔记、题库、工具、任务中心）在 `super::sources`，
+/// 命令层用 [`fan_out_term`] 决定这一腿要不要跑、喂哪个词。
+
 
 #[cfg(test)]
 mod tests {
@@ -273,5 +441,126 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn note_hit(id: &str, title: &str, kind: MatchKind) -> QuickHit {
+        QuickHit::Note(NoteHit {
+            note_id: id.into(),
+            title: title.into(),
+            snippet: String::new(),
+            updated_at: "2026-01-01T00:00:00+00:00".into(),
+            match_kind: kind,
+        })
+    }
+
+    fn tool_hit(id: &str, kind: MatchKind) -> QuickHit {
+        QuickHit::Tool(ToolHit {
+            page_id: id.into(),
+            title: id.into(),
+            updated_at: "2026-01-01T00:00:00+00:00".into(),
+            match_kind: kind,
+        })
+    }
+
+    /// 平铺混排的第一判据永远是匹配等级：一条"包含"命中的笔记不能排到一条"完全匹配"的账号之前。
+    /// 同一等级内按源的固定顺序——不跨源比时间，因为账号那一条的同级顺序是设置
+    /// `quick_launcher_rank_recent_favorite` 说了算的（需求 line 294），让笔记的时间戳插进去就把那条设置改掉了。
+    #[test]
+    fn merge_orders_by_tier_first_then_source() {
+        let merged = merge_ranked(
+            vec![
+                note_hit("n-exact", "电碳", MatchKind::Exact),
+                tool_hit("t-contains", MatchKind::Contains),
+                note_hit("n-contains", "别的电碳", MatchKind::Contains),
+                tool_hit("t-prefix", MatchKind::Prefix),
+            ],
+            10,
+        );
+        assert_eq!(
+            merged.iter().map(|h| h.match_kind()).collect::<Vec<_>>(),
+            vec![MatchKind::Exact, MatchKind::Prefix, MatchKind::Contains, MatchKind::Contains],
+        );
+        // 同为 Contains 时笔记在工具之前
+        assert_eq!(merged[2].source(), QuickSource::Note);
+        assert_eq!(merged[3].source(), QuickSource::Tool);
+    }
+
+    /// 同源同级的原序必须原样保留：各源内部各自已经排好了（账号按收藏/默认/最近，其余按更新时间），
+    /// 合并这一层不该把它们的顺序洗成别的。
+    #[test]
+    fn merge_is_stable_within_one_source() {
+        let merged = merge_ranked(
+            vec![
+                note_hit("n-1", "甲", MatchKind::Contains),
+                note_hit("n-2", "乙", MatchKind::Contains),
+                note_hit("n-3", "丙", MatchKind::Contains),
+            ],
+            10,
+        );
+        assert_eq!(
+            merged.iter().map(|h| h.source()).collect::<Vec<_>>(),
+            vec![QuickSource::Note; 3],
+        );
+        let QuickHit::Note(first) = &merged[0] else { panic!("首条应是笔记") };
+        assert_eq!(first.note_id, "n-1");
+
+        let cut = merge_ranked(vec![note_hit("n-1", "甲", MatchKind::Contains), note_hit("n-2", "乙", MatchKind::Contains)], 1);
+        assert_eq!(cut.len(), 1, "设置里的上限是最终显示条数的唯一判据");
+    }
+
+    /// 扇出的门槛：字段限定、多条件、空输入都挡下，只有一条光秃秃的关键词才扇。
+    /// `is_vault_only` 是同一件事的另一半——挡下了就要在界面上说破，不能悄悄少搜四类。
+    #[test]
+    fn fan_out_only_for_a_bare_single_keyword() {
+        assert_eq!(fan_out_term(&parser::parse("电碳").unwrap()), Some("电碳"));
+        assert!(!is_vault_only(&parser::parse("电碳").unwrap()), "单关键词是两类都搜，不是只搜保险库");
+
+        assert_eq!(fan_out_term(&parser::parse("系统:OA").unwrap()), None);
+        assert_eq!(fan_out_term(&parser::parse("标签:生产").unwrap()), None);
+        assert_eq!(fan_out_term(&parser::parse("电碳,检修").unwrap()), None, "多条件没有单个词可喂");
+        assert_eq!(fan_out_term(&parser::parse("").unwrap()), None);
+        assert_eq!(fan_out_term(&parser::parse("，").unwrap()), None, "只有一个分隔符等于空输入");
+
+        assert!(is_vault_only(&parser::parse("系统:OA").unwrap()));
+        assert!(is_vault_only(&parser::parse("电碳,检修").unwrap()));
+        // 空输入既没扇出、也不算"只搜了保险库"：那一档是收藏/最近使用的推荐位，四类本来就没有对应物
+        assert!(!is_vault_only(&parser::parse("").unwrap()));
+    }
+
+    /// 序列化线格式：`source` 是判别键，值与前端 `QuickSource` 同一份字面量。
+    /// 这条是浮层渲染分支的依据，漂一个字面量就是一片空白行。
+    #[test]
+    fn hits_serialize_with_a_source_discriminator() {
+        let json = serde_json::to_value(note_hit("n-1", "电碳台账", MatchKind::Prefix)).unwrap();
+        assert_eq!(json["source"], "note");
+        assert_eq!(json["noteId"], "n-1");
+        assert_eq!(json["matchKind"], "prefix");
+
+        let account = QuickHit::Account(AccountHit {
+            target_id: "t".into(),
+            item_id: "i".into(),
+            system_name: "OA".into(),
+            item_type: "web".into(),
+            account_alias: "日常".into(),
+            username_masked: "z•••n".into(),
+            address_summary: "https://oa.cn".into(),
+            tags: vec![],
+            is_default: true,
+            favorite: false,
+            credential_count_on_target: 1,
+            actions: vec![QuickAction::OpenTarget],
+            match_kind: MatchKind::Exact,
+        });
+        let json = serde_json::to_value(&account).unwrap();
+        assert_eq!(json["source"], "account");
+        // 账号那一条的键一个都不能少：quick_action 与前端行渲染都读这些
+        for key in ["targetId", "itemId", "systemName", "itemType", "accountAlias", "usernameMasked", "addressSummary", "isDefault", "favorite", "credentialCountOnTarget", "actions"] {
+            assert!(json.get(key).is_some(), "账号命中少了 {key}：{json}");
+        }
+
+        let task = QuickHit::Task(TaskHit { task_key: "release".into(), label: "微服务发布".into(), env: "prod".into(), match_kind: MatchKind::Exact });
+        assert_eq!(serde_json::to_value(&task).unwrap()["source"], "task");
+        let quiz = QuickHit::Quiz(QuizHit { question_id: "q".into(), library_id: "l".into(), library_name: "安规".into(), seq: 42, qtype: "single".into(), stem: "题干".into(), match_kind: MatchKind::Contains });
+        assert_eq!(serde_json::to_value(&quiz).unwrap()["source"], "quiz");
     }
 }

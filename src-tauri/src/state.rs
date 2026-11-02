@@ -98,11 +98,17 @@ impl AppCore {
         // 保险库一锁，题库连同 OCR 都必须立刻停：悬停线程每分钟几十次查库，
         // 不能等它下一次 `check_session` 才发现。
         crate::quiz::assistant::stop_for_lock();
+        // 任务中心同理：发布线程手里的会话 Cookie 随主密钥一起失效，继续跑等于拿着
+        // 无效凭据反复撞网关。这里只置停止信号并落库，绝不在这里读任何秘密。
+        crate::tasks::runner::cancel_all(self);
         // 明文已清零：立刻通知所有窗口，界面不能继续显示上一次解密出来的内容。
         // 事件不含任何数据，只表示「已进入锁定态」。
         use tauri::Emitter;
         if let Some(app) = self.app_handle.get() {
             let _ = app.emit("vault://locked", serde_json::json!({ "at": chrono::Utc::now().timestamp_millis() }));
+            // 页面库的预览窗是独立 WebView，拿不到 `vault://locked` 这条前端事件；
+            // 它的内容是从回环服务现场取的，密钥已清就得连窗口一起收掉。
+            crate::preview::close(app);
         }
     }
 
