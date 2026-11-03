@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "蒙电信产助手 · 安全填充",
   "description": "配合桌面应用「蒙电信产助手」使用的一次性凭据填充扩展：仅在桌面应用已发起本次填充、且当前页面 Origin 与台账精确匹配时工作；不存储任何凭据，永不自动提交表单。",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3Sxt7lofhipfiqn0y7Oj5TGosr2e7FZr3S5ksXCKxkHE6pWXSGRidU9PihwIG8Noc+q6q3KxfjvAkluEq+LAGvGo1/9jooiczzZ/pBWrXdts0b5kgc/s+sh9UbX3Zui7ADdEkbSq7k0yzDr6cIpnJGq9c/KV4lg+TxwR/xMvzGJ+wxHRx67+by9vbFtjEo78WCa84jDn+1DFTSJUmuhd6nQPLquBJYgb0N6chHOmkz02Vi4SUvjYSlmXlEuzlj7mCwcnPjrlTujqCL7Zpcz+gHcPSy1R6K/PnlCPVNhkSpkV2lelm2M6EOzX95YH6jc3dsswUDUgsxLywADAxaOLxQIDAQAB",
   "permissions": ["nativeMessaging", "storage", "activeTab", "scripting"],
