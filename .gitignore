@@ -1,6 +1,8 @@
 # 依赖与构建产物
 node_modules/
 dist/
+# 浏览器扩展 zip 由 scripts/package-extension.mjs 产出，Release 上传用，不入库
+dist-extension/
 src-tauri/target/
 src-tauri/gen/schemas/
 
@@ -20,6 +22,11 @@ src-tauri/binaries/
 *.key
 *.p12
 *.mobileprovision
+# 浏览器扩展的 RSA 私钥（extension/manifest.json 的 key 是它的公钥）。
+# 仓库是公开的：私钥一旦入库，任何人都能打成同 ID 的包冒充扩展。
+# 丢了也不影响分发 —— ID 由 manifest 里的公钥推导，加载未打包扩展不需要私钥；
+# 只有要出 .crx/上架商店时才用得上。重新生成会让所有已登记用户的 ID 变化。
+secrets/
 
 # 视觉轮开工前打的快照目录：throwaway 产物，不再充当版本控制。
 # 对账基线已搬进版本库固定目录 baseline-css-20261019/（见 globalCssEquivalence.test.ts 的 BASELINE_SNAPSHOT）

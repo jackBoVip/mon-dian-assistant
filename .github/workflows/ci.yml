@@ -13,6 +13,15 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+
+      - name: 扩展私钥不得入库（本仓库是公开的）
+        # extension/manifest.json 里放的只是公钥；secrets/*.pem 是能打出同 ID 冒充实体的私钥。
+        # .gitignore 挡不住 `git add -f`，所以按 git 的登记面查一次。
+        shell: bash
+        run: |
+          tracked="$(git ls-files | grep -E '(^|/)secrets/|\.pem$' || true)"
+          test -z "$tracked" || { echo "::error::私钥被登记进版本库了：$tracked"; exit 1; }
+
       - uses: actions/setup-node@v4
         with:
           # 开发机 npm 11.6.2 能过同一份锁；Node 22 的 npm 10 会因

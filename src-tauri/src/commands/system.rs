@@ -183,6 +183,7 @@ pub fn update_setting(key: String, value: String) -> Result<()> {
     }
     if key == "extension_id" && !v.is_empty() && !crate::fill_host::is_valid_extension_id(&v) {
         // 清单里的 allowed_origins 精确到扩展 ID：写错一位等于填充通道对任何扩展都失效或错放。
+        // 空值是有意允许的，含义是"回退到 fill_host::BUILTIN_EXTENSION_ID"。
         return Err(AppError::InvalidInput);
     }
     if key == "update_channel" && !matches!(v.as_str(), "stable" | "beta") {

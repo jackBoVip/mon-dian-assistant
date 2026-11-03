@@ -70,6 +70,8 @@ npx vitest run
 node scripts/prepare-ocr-models.mjs     # 下载并校验 PP-OCRv5 mobile det/rec（约 21MB，幂等）
 node scripts/prepare-ocr-models.mjs --check   # 离线复核（CI / 交付前用）
 scripts/prepare-host-binary.sh          # 用当前 rustc host triple 构建并复制到 src-tauri/binaries/
+node scripts/package-extension.mjs      # 打浏览器扩展 zip 到 dist-extension/（Release 已自动带上）
+node scripts/package-extension.mjs --check   # 只复核结构与可复现性，不落产物
 npm run tauri:build                     # 即 tauri build；bundle.targets 已声明 7 种格式，
                                         # Tauri 只会构建当前操作系统能产出的那几种
 ```

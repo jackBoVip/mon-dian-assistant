@@ -5,40 +5,56 @@
 一次性票据（约 60 秒有效、绑定站点 Origin 与当前会话）被兑换成功的瞬间，
 经本机宿主进程一次性下发给页面脚本填入表单，**永不自动提交**。
 
-## 一、加载扩展（开发者模式「加载已解压的扩展程序」）
+## 一、加载扩展
 
-以下路径均指本仓库的 `extension/` 目录。
+### 方式 A：下载 Release 的 zip（推荐给使用者）
 
-### Chrome
+1. 到本仓库 **Releases** 下载 `mon-dian-assistant-browser-extension-v<版本>.zip`，
+   解压后得到**一枚文件夹** `mon-dian-assistant-extension/`（`manifest.json` 就在它的根部）。
+2. 浏览器**不接受把 .zip 直接拖进扩展页** —— 必须先解压。开启「开发者模式」后，
+   把**那枚文件夹拖进**扩展管理页即可加载（Chrome/Edge 都支持拖文件夹）。
+3. 也可以按下面的手动路径选目录加载，两者等价。
+
+### 方式 B：手动选目录（或直接从本仓库加载 `extension/`）
+
+以下路径指解压出来的 `mon-dian-assistant-extension/`，或本仓库的 `extension/` 目录。
+
+#### Chrome
 
 - macOS：打开 `chrome://extensions/` → 右上角开启「开发者模式」→
-  点击「加载已解压的扩展程序」→ 选择 `extension/` 目录。
+  点击「加载已解压的扩展程序」→ 选择该目录。
 - Windows：同上（地址栏输入 `chrome://extensions`）。
 - Linux：同上。
 
-### Edge
+#### Edge
 
 - macOS / Windows / Linux：打开 `edge://extensions/` → 左下角或右上角开启
-  「开发者模式」→ 点击「加载解压缩的扩展」→ 选择 `extension/` 目录。
+  「开发者模式」→ 点击「加载解压缩的扩展」→ 选择该目录。
 
 > 其他基于 Chromium 的浏览器（如 Chromium 本体、Brave）加载方式与 Chrome 相同。
+> **Firefox 不在支持范围**：它要求 `browser_specific_settings.gecko.id` 且扩展须签名或走开发者渠道。
 
-## 二、查看并登记扩展 ID
+## 二、扩展 ID（发布包已固定，通常不用管）
 
-1. 加载成功后，在扩展管理页每张卡片上会显示一串 **32 位小写字母（a–p）**
-   组成的 ID，例如 `abcdefghijklmnopabcdefghijklmnop`。
-   也可以打开扩展的状态弹窗，页面底部直接显示「本扩展 ID」。
-2. 把这串 ID 填入桌面应用：**系统管理 → 浏览器扩展**。
-3. 桌面应用会用这串 ID 生成宿主清单 `com.mda.fillhost.json`
+`manifest.json` 里钉了一枚 `key`（固定的 SPKI 公钥）。Chrome/Edge 的扩展 ID 由这枚公钥推导，
+所以**同一个包在任何机器上加载都是同一串 ID**：
+
+```
+abmoenilfcffmjochdnmifallbkjlmoi
+```
+
+1. 桌面应用内置了同一串（`fill_host::BUILTIN_EXTENSION_ID`），因此
+   **系统管理 → 安全设置 → 设置项 → 「浏览器扩展 ID」留空即可**，填充通道不会因此卡住。
+2. 桌面应用用这串 ID 生成宿主清单 `com.mda.fillhost.json`
    （`allowed_origins` 精确到 `chrome-extension://<ID>/`），
    并写入各浏览器的 `NativeMessagingHosts` 目录。
-   **未登记 ID 之前，宿主清单不会生成，浏览器也无法发现宿主。**
-4. 清单写入后需**重启浏览器**，扩展才能发现宿主。
-5. Windows 特别说明：Chrome/Edge 通过注册表定位清单，桌面应用只生成清单文件
+3. 清单写入后需**重启浏览器**，扩展才能发现宿主。
+4. Windows 特别说明：Chrome/Edge 通过注册表定位清单，桌面应用只生成清单文件
    并在界面上给出注册表键位置（`HKCU\Software\Google\Chrome\NativeMessagingHosts\com.mda.fillhost`），
    需要你自行确认后将该键指向清单文件路径；应用不会自动改注册表。
-6. 重新加载扩展（改动代码后点扩展卡片上的「刷新」）可能不会改变 ID，
-   但**删除后再加载会换一个 ID**，此时需回到桌面应用更新 ID 并重新安装清单。
+5. **什么时候 ID 会变**：自己改源码、删掉 `key` 后重新加载（ID 由浏览器随机分配），
+   或改了 `key` 本身。那种情况下把扩展卡片上的新 ID 填进上面那个设置项覆盖内置值即可。
+   想核对加载出来的是不是同一串：扩展管理页卡片上会显示 ID，状态弹窗底部也直接显示「本扩展 ID」。
 
 ## 三、日常使用流程
 

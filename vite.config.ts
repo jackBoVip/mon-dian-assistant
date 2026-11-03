@@ -33,6 +33,8 @@ export default defineConfig({
     globals: true,
     css: false,
     setupFiles: ['./src/test/setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}'],
+    // scripts/ 那条是构建脚本自己的守卫（Node-only，写成 .mjs 就不进 tsc 的程）；
+    // 扩展包的结构与"公钥 ↔ 内置 ID"一致性只有在这里红才拦得住发版。
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
   },
 })

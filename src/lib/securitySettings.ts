@@ -181,9 +181,9 @@ export const SETTING_SPECS: SettingSpec[] = [
   {
     key: 'extension_id',
     label: '浏览器扩展 ID',
-    hint: '扩展分配的 32 位小写字母；留空则填充通道未就绪。',
+    hint: '留空即用应用内置的那串（发布包已钉 key，ID 跨机器恒定）；仅自行改源码加载扩展时才需填新 ID。',
     group: 'network',
-    control: { kind: 'text', size: 'lg', placeholder: '32 位小写字母' },
+    control: { kind: 'text', size: 'lg', placeholder: '留空 = 内置 ID' },
   },
   {
     key: 'quick_launcher_enabled',

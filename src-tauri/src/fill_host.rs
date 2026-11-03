@@ -1,8 +1,10 @@
 //! Native Messaging 宿主清单（manifest）的生成与安装。
 //!
 //! 边界说明（必须如实呈现给使用者）：
-//! - 浏览器厂商要求 manifest 中的 `allowed_origins` 精确到扩展 ID。本应用不内置任何默认扩展 ID，
-//!   也绝不伪造一个"看起来能用"的 ID：未配置时清单不会被写入浏览器目录，状态返回未安装。
+//! - 浏览器厂商要求 manifest 中的 `allowed_origins` 精确到扩展 ID。发布出去的扩展在
+//!   `extension/manifest.json` 里钉了 `key`（一枚固定的 SPKI 公钥），所以它的 ID 跨机器恒定，
+//!   本应用内置那串（`BUILTIN_EXTENSION_ID`）作为默认值：设置项留空即用它，清单照样能生成。
+//!   自行改源码加载扩展（没有那枚 key）时 ID 会变，此时把新 ID 填进设置项覆盖默认值。
 //! - Windows 上 Chrome/Edge 通过注册表定位 manifest。本应用只写用户目录下的清单文件，
 //!   并在状态里给出需要由使用者自行导入的注册表键值；未经确认不改动注册表。
 //! - 宿主二进制必须与主程序一同分发；找不到二进制时同样返回未就绪。
@@ -15,6 +17,11 @@ use crate::state::AppCore;
 
 pub const HOST_NAME: &str = "com.mda.fillhost";
 pub const PROTOCOL: &str = "mda-fill/1";
+
+/// 发布扩展的固定 ID：`extension/manifest.json` 里 `key` 那枚公钥的
+/// SHA-256 前 16 字节按 0→a…15→p 映射而来。改公钥就要改这里，
+/// 两侧的一致性由 `scripts/extension-pack.test.mjs` 逐条比对（不靠人记）。
+pub const BUILTIN_EXTENSION_ID: &str = "abmoenilfcffmjochdnmifallbkjlmoi";
 
 /// 应用自己管理的清单文件（始终生成，供用户核对或手动引用）。
 pub fn manifest_install_path() -> Option<PathBuf> {
@@ -109,17 +116,21 @@ pub fn manifest_json(extension_id: &str, host_path: &std::path::Path) -> serde_j
     })
 }
 
-/// 写入应用自管清单；返回 (路径, 原因)。未配置扩展 ID 或找不到二进制时不写。
+/// 写入应用自管清单；返回 (路径, 原因)。找不到二进制时不写。
+/// 扩展 ID 取设置项 `extension_id`，留空回退到发布扩展的内置 ID。
 pub fn prepare(core: &AppCore) -> std::result::Result<serde_json::Value, (String, String)> {
-    let extension_id = settings::get(&core.db, "extension_id")
+    let configured = settings::get(&core.db, "extension_id")
         .map_err(|_| ("INTERNAL".to_string(), "设置读取失败".to_string()))?
         .unwrap_or_default();
-    if extension_id.trim().is_empty() {
-        return Err(("EXTENSION_ID_REQUIRED".into(), "尚未配置浏览器扩展 ID：清单无法生成，因为 allowed_origins 必须精确到扩展 ID".into()));
-    }
-    if !is_valid_extension_id(extension_id.trim()) {
-        return Err(("EXTENSION_ID_INVALID".into(), "扩展 ID 格式不正确：应为 32 位小写字母".into()));
-    }
+    let configured = configured.trim().to_string();
+    let (extension_id, id_source) = if configured.is_empty() {
+        (BUILTIN_EXTENSION_ID.to_string(), "builtin")
+    } else {
+        if !is_valid_extension_id(&configured) {
+            return Err(("EXTENSION_ID_INVALID".into(), "扩展 ID 格式不正确：应为 32 位小写字母；留空则使用内置 ID".into()));
+        }
+        (configured, "configured")
+    };
     let host = host_binary_path().ok_or_else(|| {
         ("HOST_BINARY_MISSING".into(), "未找到宿主二进制 mda_fill_host：请与主程序一同构建/分发后再试".into())
     })?;
@@ -127,14 +138,15 @@ pub fn prepare(core: &AppCore) -> std::result::Result<serde_json::Value, (String
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|_| ("INTERNAL".into(), "无法创建清单目录".into()))?;
     }
-    let body = manifest_json(extension_id.trim(), &host).to_string();
+    let body = manifest_json(&extension_id, &host).to_string();
     // 这个函数的错误形状是 (code, message) 元组，不共用 AppError：把 secfile 的原因如实转过去。
     crate::secfile::write_private(&path, body.as_bytes())
         .map_err(|e| (e.code().to_string(), e.to_string()))?;
     Ok(serde_json::json!({
         "manifestPath": path.display().to_string(),
         "hostPath": host.display().to_string(),
-        "extensionId": extension_id.trim(),
+        "extensionId": extension_id,
+        "extensionIdSource": id_source,
         "protocol": PROTOCOL,
         "browserDirs": browser_manifest_dirs().iter().map(|(l, d)| serde_json::json!({ "browser": l, "path": d.display().to_string() })).collect::<Vec<_>>(),
         "registryHint": registry_hint(),
@@ -144,7 +156,7 @@ pub fn prepare(core: &AppCore) -> std::result::Result<serde_json::Value, (String
 /// 安装到浏览器目录：逐个目录尝试，返回每个目录的结果，失败原因如实返回。
 pub fn install(core: &AppCore) -> Result<serde_json::Value> {
     let prepared = prepare(core).map_err(|(code, _)| match code.as_str() {
-        "EXTENSION_ID_REQUIRED" | "EXTENSION_ID_INVALID" => AppError::InvalidInput,
+        "EXTENSION_ID_INVALID" => AppError::InvalidInput,
         _ => AppError::Internal,
     })?;
     let src = std::path::PathBuf::from(prepared.get("manifestPath").and_then(|v| v.as_str()).unwrap_or(""));
@@ -218,6 +230,15 @@ mod tests {
         assert_eq!(v["type"], "stdio");
         assert_eq!(v["allowed_origins"][0], "chrome-extension://abcdefghijklmnopabcdefghijklmnop/");
         assert_eq!(v["path"], "/usr/local/bin/mda_fill_host");
+    }
+
+    #[test]
+    fn builtin_extension_id_is_a_valid_id() {
+        // 这串值是从发布扩展的公钥推导来的；形状错了等于清单里 allowed_origins 废掉，
+        // 公钥与它的真实对应关系由 scripts/extension-pack.test.mjs 校验（Rust 侧不做 sha256）。
+        assert!(is_valid_extension_id(BUILTIN_EXTENSION_ID));
+        let v = manifest_json(BUILTIN_EXTENSION_ID, std::path::Path::new("/x"));
+        assert_eq!(v["allowed_origins"][0], format!("chrome-extension://{BUILTIN_EXTENSION_ID}/"));
     }
 
     #[test]
