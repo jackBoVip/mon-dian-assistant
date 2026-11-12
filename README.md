@@ -105,7 +105,6 @@ npm run tauri:build                     # 即 tauri build；bundle.targets 已�
 - **隐私**：截图只在内存里存在一瞬，识别完立即释放，不落盘；关闭助手或锁库时线程与浮层一起停。
 - **开发态的速度别当真**：`npm run tauri:dev` 之外没有额外开销时，一次识别在发布档约 0.25–0.35s，而 debug 档若不优化推理依赖会到 4 秒以上。`Cargo.toml` 已给整条 tract 推理链单独开了 `opt-level = 3`，改过它之后**要停掉 `tauri:dev` 重新起一次**才生效（首次重建约 1–2 分钟）。
 
-
 签名与公证（notarize）不在本仓库自动化：发布方需自备 Apple 开发者证书、Windows 代码签名证书，
 更新清单的 ed25519 公钥通过配置注入（`release_pubkey()`），**仓库内不含任何私钥或初始口令**。
 
