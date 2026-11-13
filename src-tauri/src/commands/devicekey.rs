@@ -86,6 +86,9 @@ pub fn grant_device_key_fallback(app: AppHandle) -> Result<()> {
     let _guard = GrantGuard;
     // consent=true：这条路径的唯一入口就是界面上的显式确认，未确认时启动阶段不会走到这里。
     let db_key = bootstrap_db_key(&data_dir, true)?;
+    // 装配本身只做纯后端动作（开库、注入共享状态、起本机通道/预览服务），可以同步完成，
+    // 保证命令返回时前端 bootstrap() 读到的就是已装配状态。唯独启动器窗口与全局快捷键
+    // 必须离开本次 IPC 回调栈，见 lib.rs::finish_boot 里的说明。
     let core = finish_boot(&app, data_dir.clone(), db_key)?;
     // 同意后必须真的落到文件密钥上；报"unknown"说明标记文件没写上，界面会显示成无同意记录。
     let used_file_key = keystore_fallback_used(&data_dir);

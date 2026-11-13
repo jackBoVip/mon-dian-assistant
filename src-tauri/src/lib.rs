@@ -313,11 +313,29 @@ pub fn finish_boot(app: &tauri::AppHandle, data_dir: PathBuf, db_key: SecretByte
     if let Err(e) = preview::start(core.clone()) {
         log::warn!("页面预览服务未启动：{}", e.code());
     }
-    // 启动器窗口预先创建（隐藏），保证快捷键第一下就能唤起
-    let _ = launcher::ensure_window(app);
-    if let Some(accel) = launcher::bootstrap(app, &core) {
-        log::info!("全局快捷键已注册：{accel}");
-    }
+    // 启动器窗口与全局快捷键绝不能在「同意」命令的调用栈里创建：那条同步 command 跑在
+    // WebView 的 IPC 回调栈上，嵌套创建 WebView2 窗口会和主线程消息循环互等，界面永久
+    // 停在「正在按你的选择准备保险库…」（数据库其实已经装好了）。
+    // 也不能直接 app.run_on_main_thread：wry 的 send_user_message 在「当前线程就是主线程」
+    // 时会**同步立即执行**闭包，等于没挪出调用栈。必须从一个非主线程发出，才会走
+    // proxy.send_event 排队，等本次 command 返回后由事件循环取出执行。
+    // 这两项是增强功能：即便排队后的任务失败，也不能影响装配返回与主界面。
+    let ui_app = app.clone();
+    let ui_core = core.clone();
+    std::thread::spawn(move || {
+        let inner_app = ui_app.clone();
+        if let Err(e) = ui_app.run_on_main_thread(move || {
+            log::info!("启动器初始化任务已离开命令调用栈，开始执行");
+            if let Err(e) = launcher::ensure_window(&inner_app) {
+                log::warn!("启动器窗口未创建：{}", e.code());
+            }
+            if let Some(accel) = launcher::bootstrap(&inner_app, &ui_core) {
+                log::info!("全局快捷键已注册：{accel}");
+            }
+        }) {
+            log::warn!("启动器初始化未能排入主线程：{e}");
+        }
+    });
     spawn_idle_lock(core.clone());
     Ok(core)
 }

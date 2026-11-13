@@ -44,13 +44,25 @@ pub fn apply(handle: &AppHandle) {
         }
     }
     #[cfg(windows)]
-    round_corners(&window);
+    {
+        match window.hwnd() {
+            Ok(hwnd) => {
+                // Win11 走 DWM 原生圆角；属性不存在（Win10）时退回窗口区域裁剪。
+                if !dwm_round_corners(hwnd.0) {
+                    region_corners::install(hwnd.0, &window);
+                }
+            }
+            Err(e) => log::warn!("取不到主窗 HWND：跳过圆角设置（{e}）"),
+        }
+    }
 }
 
 /// Windows 11 的 DWM 只给**有系统边框**的窗口自动圆角；去框后必须显式要求圆角。
-/// Windows 10 根本没有这个属性，调用返回失败码 —— 那一代无任何圆角 API，直角属预期。
+/// `DWMWA_WINDOW_CORNER_PREFERENCE` 是 Win11 (build 22000+) 才有的属性，Win10 的
+/// dwmapi 不认识它，调用返回失败码 —— 用这个失败作为分支信号，比读版本号可靠
+/// （`GetVersionExW` 在没有 supportedOS 清单的进程里会被骗成 6.2）。
 #[cfg(windows)]
-fn round_corners(window: &tauri::WebviewWindow) {
+fn dwm_round_corners(hwnd: *mut core::ffi::c_void) -> bool {
     // 直接声明而不是引 `windows` crate：它已在依赖图里（tauri 用 0.62.2），
     // 但为一个函数把它提成本包的直接依赖不值得，且会多一处版本要对齐。
     #[link(name = "dwmapi")]
@@ -60,20 +72,113 @@ fn round_corners(window: &tauri::WebviewWindow) {
     const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
     const DWMWCP_ROUND: u32 = 2;
 
-    let Ok(hwnd) = window.hwnd() else {
-        log::warn!("取不到主窗 HWND：跳过圆角设置");
-        return;
-    };
     let hr = unsafe {
         DwmSetWindowAttribute(
-            hwnd.0,
+            hwnd,
             DWMWA_WINDOW_CORNER_PREFERENCE,
             &DWMWCP_ROUND,
             std::mem::size_of::<u32>() as u32,
         )
     };
     if hr != 0 {
-        log::warn!("DWM 圆角未生效（hr={hr:#010x}）：Windows 10 无此属性，直角属预期");
+        log::warn!("DWM 圆角未生效（hr={hr:#010x}）：判定为 Windows 10，改用窗口区域圆角");
+    }
+    hr == 0
+}
+
+/// Windows 10 的兜底圆角：`SetWindowRgn` + `CreateRoundRectRgn` 把窗口裁成圆角矩形。
+///
+/// 诚实说明代价（不是 DWM 圆角的等价替代）：
+/// - HRGN 是**硬裁剪，边缘没有抗锯齿**，高 DPI 下四角会有可见锯齿；
+/// - 顶层窗口的 region 会连带裁掉 DWM 阴影，窗口看起来比 Win11 更"贴"桌面；
+/// - 最大化时必须撤掉 region，否则四角会露出桌面；
+/// - size / DPI 变化后 region 不会自动跟随，必须重设（下面注册了窗口事件）。
+/// 全部失败都只记日志、保持直角，绝不影响应用启动。
+#[cfg(windows)]
+mod region_corners {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    /// 100% 缩放下与 Win11 DWM 圆角接近的半径（物理像素）。
+    const RADIUS_100: f64 = 12.0;
+
+    #[repr(C)]
+    struct Rect {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+
+    #[link(name = "gdi32")]
+    extern "system" {
+        fn CreateRoundRectRgn(x1: i32, y1: i32, x2: i32, y2: i32, w: i32, h: i32) -> *mut core::ffi::c_void;
+        fn DeleteObject(obj: *mut core::ffi::c_void) -> i32;
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn SetWindowRgn(hwnd: *mut core::ffi::c_void, rgn: *mut core::ffi::c_void, redraw: i32) -> i32;
+        fn GetWindowRect(hwnd: *mut core::ffi::c_void, rect: *mut Rect) -> i32;
+        fn IsZoomed(hwnd: *mut core::ffi::c_void) -> i32;
+    }
+
+    /// 返回 false 表示这一步没做成，调用方保持直角即可。
+    fn set_region(hwnd_raw: isize, scale: f64) -> bool {
+        let hwnd = hwnd_raw as *mut core::ffi::c_void;
+        unsafe {
+            // 最大化时窗口本就该贴满屏幕，撤掉 region 恢复矩形。
+            if IsZoomed(hwnd) != 0 {
+                return SetWindowRgn(hwnd, std::ptr::null_mut(), 1) != 0;
+            }
+            let mut r = Rect { left: 0, top: 0, right: 0, bottom: 0 };
+            if GetWindowRect(hwnd, &mut r) == 0 {
+                return false;
+            }
+            let w = r.right - r.left;
+            let h = r.bottom - r.top;
+            if w <= 0 || h <= 0 {
+                return false;
+            }
+            // clamp 的上下界必须保持 min<=max，否则 f64::clamp 会 panic。
+            let max_radius = ((w.min(h) / 4).max(4)) as f64;
+            let radius = (RADIUS_100 * scale).round().clamp(4.0, max_radius) as i32;
+            // 后两参是圆角**椭圆的直径**，不是半径；右下 +1 是 GDI 半开区间的惯例。
+            let rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, radius * 2, radius * 2);
+            if rgn.is_null() {
+                return false;
+            }
+            if SetWindowRgn(hwnd, rgn, 1) == 0 {
+                DeleteObject(rgn); // 失败时 HRGN 仍归我们，成功则由系统接管，不能删。
+                return false;
+            }
+        }
+        true
+    }
+
+    pub(super) fn install(hwnd: *mut core::ffi::c_void, window: &tauri::WebviewWindow) {
+        let raw = hwnd as isize;
+        let scale_x100 = Arc::new(AtomicU32::new(
+            (window.scale_factor().unwrap_or(1.0).max(1.0) * 100.0).round() as u32,
+        ));
+        let scale = scale_x100.load(Ordering::Relaxed) as f64 / 100.0;
+        if set_region(raw, scale) {
+            log::info!("已启用 Windows 10 窗口区域圆角（{RADIUS_100:.0}px @100%，硬裁剪）");
+        } else {
+            log::warn!("窗口区域圆角设置失败：保持直角");
+        }
+
+        let shared = scale_x100.clone();
+        window.on_window_event(move |event| {
+            match event {
+                tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                    shared.store((*scale_factor * 100.0).round() as u32, Ordering::Relaxed);
+                }
+                tauri::WindowEvent::Resized(_) => {}
+                _ => return,
+            }
+            let s = shared.load(Ordering::Relaxed) as f64 / 100.0;
+            let _ = set_region(raw, s);
+        });
     }
 }
 
