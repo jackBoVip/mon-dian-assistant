@@ -29,3 +29,13 @@
 *.ttf binary
 *.woff binary
 *.woff2 binary
+
+# releases/ 里的分发产物：安装包与扩展 zip 都是二进制，`* text=auto` 虽能
+# 自动识别，仍显式钉死，避免三端检出时被 eol=lf 规则误伤导致 SHA256SUMS 对不上。
+*.exe binary
+*.msi binary
+*.zip binary
+*.dmg binary
+*.deb binary
+*.rpm binary
+*.AppImage binary

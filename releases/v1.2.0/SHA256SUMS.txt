@@ -1,0 +1,2 @@
+4f85b4156ca056fff5517dba433c666139ca3fa7e5786503a50f9b21f36b2544  mon-dian-assistant-browser-extension-v1.2.0.zip
+845907fbfe72ea35b65ec9d7c7459fd971237bda1b15ecdfe64539238e5e23b7  mon-dian-assistant_1.2.0_x64-setup.exe
