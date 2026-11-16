@@ -66,6 +66,7 @@ const SECURITY: SecurityStatus = {
 
 const CHANNEL: ExtensionChannelStatus = {
   ready: false,
+  hostRegistered: true,
   hostManifestPath: null,
   channelFilePresent: false,
   pendingTickets: 0,

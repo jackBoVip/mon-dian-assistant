@@ -307,6 +307,10 @@ pub fn finish_boot(app: &tauri::AppHandle, data_dir: PathBuf, db_key: SecretByte
     if let Err(e) = ipc::start(core.clone()) {
         log::warn!("本机通道未启动：{}", e.code());
     }
+    // 浏览器扩展宿主清单 + Windows 注册表：安装后首次启动即自动注册，不再要求使用者
+    // 手工导入注册表。清单被删、注册表失配、安装目录变化都会在这里自愈；失败只记日志，
+    // 填充功能降级但主程序照常可用（见 fill_host::auto_register）。
+    fill_host::auto_register(&core);
     // 局域网更新通道：发现线程常驻；托管服务仅在开关打开时监听
     lan::start(&core);
     // 页面库预览：回环供页服务常驻；起不来只降级（预览入口会报 PREVIEW_UNAVAILABLE，其余功能不受影响）

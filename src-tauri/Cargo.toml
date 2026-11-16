@@ -73,6 +73,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # 光标附近截屏；只用到 Monitor 的截图能力，不启用窗口/录制功能。
 xcap = "0.9"
 
+# Windows 上 Chrome/Edge 通过 HKCU 注册表定位 Native Messaging 宿主清单；HKCU 是当前用户可写，
+# 不需要管理员权限。winreg 已在传递依赖里，这里显式声明以便直接调用。
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.56"
+
 # Linux 的托盘靠 appindicator 动态库，缺库时 libappindicator-sys 的 Lazy 会 panic（release 是 panic = "abort"）；
 # tray::install 建托盘前自己 dlopen 探一次再决定降级，所以这里要 libloading（与 libappindicator-sys 同一份 0.8）。
 [target.'cfg(target_os = "linux")'.dependencies]

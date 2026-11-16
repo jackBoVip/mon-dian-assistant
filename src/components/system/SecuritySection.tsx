@@ -55,8 +55,11 @@ export function SecuritySection() {
         {channel.isError ? <ErrorState raw={channel.error} onRetry={() => void channel.refetch()} /> : null}
         {channel.data ? (
           <div className="surface p-4">
-            <StatusRow label="扩展/宿主已就绪">
-              <Badge tone={channel.data.ready ? 'success' : 'warning'}>{channel.data.ready ? '已连接' : '未就绪'}</Badge>
+            <StatusRow label="宿主已自动注册">
+              <Badge tone={channel.data.hostRegistered ? 'success' : 'warning'}>{channel.data.hostRegistered ? '已注册' : '未注册'}</Badge>
+            </StatusRow>
+            <StatusRow label="扩展/宿主已连接">
+              <Badge tone={channel.data.ready ? 'success' : 'warning'}>{channel.data.ready ? '已连接' : '等待扩展'}</Badge>
             </StatusRow>
             <StatusRow label="通道文件存在">{channel.data.channelFilePresent ? '是' : '否'}</StatusRow>
             <StatusRow label="待消费票据数">{channel.data.pendingTickets}</StatusRow>

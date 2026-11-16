@@ -195,6 +195,11 @@ pub fn update_setting(key: String, value: String) -> Result<()> {
     if key.starts_with("lan_") {
         crate::lan::sync(&core);
     }
+    // 扩展 ID 改了要立刻重写宿主清单 + 注册表：否则要等到下次启动才生效，
+    // 期间用户会看到"清单还是旧 ID"的假故障。失败只记日志，不回滚设置。
+    if key == "extension_id" {
+        crate::fill_host::auto_register_force(&core);
+    }
     audit(&core, Some(&user), "system.setting.update", Some("setting"), Some(&key), true, None, "app");
     Ok(())
 }
@@ -418,11 +423,27 @@ pub fn extension_channel_status() -> Result<serde_json::Value> {
 
 /// 通道就绪状态：不含端口、令牌与任何凭据。
 pub(crate) fn channel_state(core: &AppCore) -> serde_json::Value {
+    // 宿主清单/注册表在启动装配时已自动注册（见 fill_host::auto_register）；这里只做只读
+    // 回显，让界面能区分"宿主没装好"（异常，需排查）与"浏览器扩展未打开"（正常状态）。
+    #[cfg(target_os = "windows")]
+    let host_registered = crate::fill_host::manifest_install_path()
+        .map(|p| p.is_file() && crate::fill_host::windows_registry_healthy(&p))
+        .unwrap_or(false);
+    #[cfg(not(target_os = "windows"))]
+    let host_registered = crate::fill_host::manifest_install_path().map(|p| p.is_file()).unwrap_or(false);
+
     serde_json::json!({
         "ready": core.extension_ready(),
+        "hostRegistered": host_registered,
         "hostManifestPath": crate::fill_host::manifest_install_path().map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
         "channelFilePresent": crate::ipc::channel_file(&core.data_dir).exists(),
         "pendingTickets": core.tickets.pending_count(),
-        "note": if core.extension_ready() { "扩展已连接" } else { "未检测到浏览器扩展/Native Messaging 宿主：填充功能降级为手动复制" }
+        "note": if !host_registered {
+            "浏览器宿主未注册：请查看启动日志；填充功能降级为手动复制"
+        } else if core.extension_ready() {
+            "扩展已连接"
+        } else {
+            "宿主已就绪，等待浏览器扩展连接（安装扩展后需重启浏览器）"
+        }
     })
 }

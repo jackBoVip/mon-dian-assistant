@@ -713,6 +713,8 @@ export interface SystemInfo {
 /** commands::system::channel_state / extension_channel_status 返回 */
 export interface ExtensionChannelStatus {
   ready: boolean
+  /** 宿主清单与注册表在应用启动时自动注册，无需用户手动导入 */
+  hostRegistered: boolean
   hostManifestPath: string | null
   channelFilePresent: boolean
   pendingTickets: number
@@ -911,13 +913,16 @@ export interface ExtensionHostStatusFailed {
 }
 export type ExtensionHostStatus = ExtensionHostStatusReady | ExtensionHostStatusFailed
 
-/** data::extension_host_install 返回 */
+/** data::extension_host_install 返回（应用启动时已自动注册，此命令用于手动重试） */
 export interface ExtensionHostInstallResult {
-  installed: Array<{ browser: string; path: string }>
+  manifestPath: string
+  hostPath: string | null
+  extensionId: string | null
+  extensionIdSource: string | null
+  /** 已写入的注册表键（Windows）或浏览器目录（其它平台） */
+  written: string[]
   failed: Array<{ browser: string; reason: string }>
   registryHint: string | null
-  hostPath: string | null
-  note: string
 }
 
 /** data::extension_host_uninstall 返回 */
