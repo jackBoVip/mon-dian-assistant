@@ -53,10 +53,11 @@ fn app_data_dir() -> Option<PathBuf> {
             #[cfg(all(unix, not(target_os = "macos")))]
             {
                 std::env::var_os("XDG_DATA_HOME")
+                    .map(PathBuf::from)
                     .or_else(|| {
                         std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))
                     })
-                    .map(|d| PathBuf::from(d).join("com.mda.assistant"))
+                    .map(|d| d.join("com.mda.assistant"))
             }
         })
 }
