@@ -431,8 +431,13 @@ jobs:
             \`chrome://extensions\`（Edge 是 \`edge://extensions\`），或点「加载已解压的扩展程序」选中它。
             **直接把 .zip 拖进去会被浏览器拒绝**，必须先解压。包内 \`manifest.json\` 钉了 \`key\`，
             扩展 ID 跨机器恒定为 \`abmoenilfcffmjochdnmifallbkjlmoi\`，与桌面应用内置的那串一致 ——
-            系统管理的「浏览器扩展 ID」留空即可，应用会据此生成宿主清单，**清单写入后需重启浏览器**
-            扩展才能发现宿主。Firefox 不在支持范围（需 gecko 配置与商店签名）。
+            系统管理的「浏览器扩展 ID」留空即用内置值。**但宿主清单目前不会自动生成**：生成它的
+            \`extension_host_install\` 等命令前端没有入口，三端都要手工放置清单。Windows 还必须手工建注册表键
+            \`HKCU\Software\Google\Chrome\NativeMessagingHosts\com.mda.fillhost\`，默认值指向
+            \`%APPDATA%\com.mda.assistant\native-host\com.mda.fillhost.json\`（**有 native-host 这一层**）。
+            清单内容与逐平台步骤见 \`docs/部署手册.md\` §3.1；**放好后需重启浏览器**扩展才能发现宿主。
+            扩展把「宿主没装/键缺失」也报成"桌面应用未运行"，那句提示不能用来判断应用是否在跑。
+            Firefox 不在支持范围（需 gecko 配置与商店签名）。
 
           交付前必读：三端**均未签名、均未在目标机做过安装与首启验证**；浏览器扩展同样**尚未在真浏览器上
           做过端到端填充验证**（ID 由公钥推导这一步是脚本比对，不是浏览器实测）；WebView2 走

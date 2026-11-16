@@ -45,13 +45,17 @@ abmoenilfcffmjochdnmifallbkjlmoi
 
 1. 桌面应用内置了同一串（`fill_host::BUILTIN_EXTENSION_ID`），因此
    **系统管理 → 安全设置 → 设置项 → 「浏览器扩展 ID」留空即可**，填充通道不会因此卡住。
-2. 桌面应用用这串 ID 生成宿主清单 `com.mda.fillhost.json`
-   （`allowed_origins` 精确到 `chrome-extension://<ID>/`），
-   并写入各浏览器的 `NativeMessagingHosts` 目录。
-3. 清单写入后需**重启浏览器**，扩展才能发现宿主。
-4. Windows 特别说明：Chrome/Edge 通过注册表定位清单，桌面应用只生成清单文件
-   并在界面上给出注册表键位置（`HKCU\Software\Google\Chrome\NativeMessagingHosts\com.mda.fillhost`），
-   需要你自行确认后将该键指向清单文件路径；应用不会自动改注册表。
+2. **宿主清单目前要手工放置，应用不会自动生成。** 生成清单的 `extension_host_install`
+   等命令在后端存在，但前端没有任何界面调用它们。清单名为 `com.mda.fillhost.json`，
+   `allowed_origins` 精确到 `chrome-extension://<ID>/`，内容模板与逐平台放置位置见
+   仓库 `docs/部署手册.md` §3.1。macOS/Linux 放进对应浏览器的 `NativeMessagingHosts` 目录。
+3. 清单放好后需**重启浏览器**，扩展才能发现宿主。
+4. Windows 特别说明：Chrome/Edge 只通过注册表定位清单，应用不写注册表。需手工建键
+   `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.mda.fillhost`（Edge 把 `Google\Chrome`
+   换成 `Microsoft\Edge`），默认值指向 `%APPDATA%\com.mda.assistant\native-host\com.mda.fillhost.json`
+   —— **注意有 `native-host` 这一层**，且该文件要你自己按第 2 条写出来。
+   另：本扩展在端口断开时一律报「桌面应用未运行」，**宿主没装、注册表键缺失、清单路径写错
+   也是同一句提示**，所以那句话不能用来判断应用是否真的在跑。
 5. **什么时候 ID 会变**：自己改源码、删掉 `key` 后重新加载（ID 由浏览器随机分配），
    或改了 `key` 本身。那种情况下把扩展卡片上的新 ID 填进上面那个设置项覆盖内置值即可。
    想核对加载出来的是不是同一串：扩展管理页卡片上会显示 ID，状态弹窗底部也直接显示「本扩展 ID」。
