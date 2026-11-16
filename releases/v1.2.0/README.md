@@ -2,7 +2,7 @@
 
 本目录存放可直接分发的二进制与浏览器扩展源码包，供 Gitee 仓库页面和 Release 下载。
 
-## 先看这里：本目录的 exe 有两处实测缺陷
+## 先看这里：本目录的 exe 的拆包核对结果
 
 拆包核对（`7z l`）后如实记录，别把这份当成完整交付物：
 
@@ -10,9 +10,14 @@
    模型不入库（21 MB），打包前必须先跑 `node scripts/prepare-ocr-models.mjs`；CI 里这一步是**阻塞门禁**
    （取完再跑 `--check`），本机那次 build 没跑，于是包就带着空 `ocr/` 出厂了。
    这也是本目录 exe 只有 13.76 MiB、而 CI 那份 31.3 MiB 的差额来源。
-2. **多打进了 `mda_release.exe`（16,029,696 字节）。** 那是离线发布签名工具
-   （`src-tauri/src/bin/mda_release.rs`），只在发布机上跑，不该进分发给终端用户的产物。
-   它不含私钥（私钥是它生成的外部文件），但被 NSIS 收进包里的原因尚未查明。
+2. **包里有 `mda_release.exe`（16,029,696 字节）——这不是本机事故，是历代打包行为。**
+   那是离线发布签名工具（`src-tauri/src/bin/mda_release.rs`）。`Cargo.toml` 没写 `[[bin]]`，
+   cargo 自动发现 `src/bin/` 下的两个 bin 目标，而 tauri 打包把 crate 的**全部 bin** 都收进产物：
+   自 v1.0.0 起每一批的 NSIS / deb / macOS app 里都有它（`docs/部署手册.md` 的 v1.0.0 实物核对
+   两节早已登记，2026-11-16 对 v1.2.1 的 CI 产物复核仍是同一形态）。它不含私钥（私钥是它运行时
+   生成的外部文件）。同一机制还让 `mda_fill_host.exe` 在 NSIS 里登记两次（自动 bin 一次 +
+   `externalBin` 一次，安装时后者覆盖前者）。**要不要把签名工具移出分发包是待交付方定的决策**，
+   本轮未改；v1.2.1 的包里同样有它。
 
 本目录的 exe 构建于首启死锁修复提交 `869f1a3` 之后；而 **GitHub Release `v1.2.0` 上的
 `Windows-x64-setup.exe`（32,817,304 字节）target 是 `e17381a`，不含那项修复** —— 装了它会卡在
@@ -24,7 +29,7 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `mon-dian-assistant_1.2.0_x64-setup.exe` | Windows NSIS 安装向导（x64）。**缺 OCR 模型、多含签名工具，见上。** |
+| `mon-dian-assistant_1.2.0_x64-setup.exe` | Windows NSIS 安装向导（x64）。**缺 OCR 模型；含签名工具（历代打包行为），见上。** |
 | `mon-dian-assistant-browser-extension-v1.2.0.zip` | 浏览器扩展**源码包**（zip 形式，非 crx）。解压后得到单个 `mon-dian-assistant-extension/` 目录。 |
 | `SHA256SUMS.txt` | 上述两个文件的 SHA-256 校验清单。 |
 
