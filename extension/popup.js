@@ -15,7 +15,7 @@ const COPY = {
 };
 
 const ERROR_NOTE = {
-  HOST_CONNECT_FAILED: '未能拉起宿主进程：请确认桌面应用已安装宿主清单，并已在本页填写扩展 ID。',
+  HOST_CONNECT_FAILED: '未能拉起宿主进程：请确认桌面应用已启动（宿主清单由应用自动注册），并在「系统管理 → 安全设置」核对「宿主已自动注册」；刚注册过需重启浏览器。',
   CHANNEL_MISSING: '未找到本机通道文件：桌面应用可能未运行。',
   APP_NOT_RUNNING: '桌面应用未运行，或应用与宿主之间的通道已断开。',
   CHANNEL_CORRUPT: '本机通道文件损坏：请重启桌面应用。',

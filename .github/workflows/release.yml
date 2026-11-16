@@ -445,11 +445,13 @@ jobs:
             \`chrome://extensions\`（Edge 是 \`edge://extensions\`），或点「加载已解压的扩展程序」选中它。
             **直接把 .zip 拖进去会被浏览器拒绝**，必须先解压。包内 \`manifest.json\` 钉了 \`key\`，
             扩展 ID 跨机器恒定为 \`abmoenilfcffmjochdnmifallbkjlmoi\`，与桌面应用内置的那串一致 ——
-            系统管理的「浏览器扩展 ID」留空即用内置值。**但宿主清单目前不会自动生成**：生成它的
-            \`extension_host_install\` 等命令前端没有入口，三端都要手工放置清单。Windows 还必须手工建注册表键
-            \`HKCU\Software\Google\Chrome\NativeMessagingHosts\com.mda.fillhost\`，默认值指向
-            \`%APPDATA%\com.mda.assistant\native-host\com.mda.fillhost.json\`（**有 native-host 这一层**）。
-            清单内容与逐平台步骤见 \`docs/部署手册.md\` §3.1；**放好后需重启浏览器**扩展才能发现宿主。
+            系统管理的「浏览器扩展 ID」留空即用内置值。**宿主清单与注册位置由桌面应用启动时自动注册**：
+            Windows 写 \`HKCU\` 下 Chrome 与 Edge 的 \`NativeMessagingHosts\com.mda.fillhost\` 两键
+            （当前用户自己的配置单元，**不需要管理员权限**），macOS/Linux 写对应浏览器的
+            \`NativeMessagingHosts\` 目录。清单被删、键值失配、安装目录变化都会在下次启动自愈；
+            注册失败只记日志、不影响启动，此时 系统管理 → 安全设置 的「宿主已自动注册」徽标显示「未注册」。
+            （1.2.1 及更早的包没有这段自动注册，那些版本仍要手工放置清单与导入注册表键。）
+            清单内容与逐平台核对值见 \`docs/部署手册.md\` §3.1；**注册好后需重启浏览器**扩展才能发现宿主。
             扩展把「宿主没装/键缺失」也报成"桌面应用未运行"，那句提示不能用来判断应用是否在跑。
             Firefox 不在支持范围（需 gecko 配置与商店签名）。
 

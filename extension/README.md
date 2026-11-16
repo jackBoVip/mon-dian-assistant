@@ -46,15 +46,19 @@ abmoenilfcffmjochdnmifallbkjlmoi
 
 1. 桌面应用内置了同一串（`fill_host::BUILTIN_EXTENSION_ID`），因此
    **系统管理 → 安全设置 → 设置项 → 「浏览器扩展 ID」留空即可**，填充通道不会因此卡住。
-2. **宿主清单目前要手工放置，应用不会自动生成。** 生成清单的 `extension_host_install`
-   等命令在后端存在，但前端没有任何界面调用它们。清单名为 `com.mda.fillhost.json`，
-   `allowed_origins` 精确到 `chrome-extension://<ID>/`，内容模板与逐平台放置位置见
-   仓库 `docs/部署手册.md` §3.1。macOS/Linux 放进对应浏览器的 `NativeMessagingHosts` 目录。
-3. 清单放好后需**重启浏览器**，扩展才能发现宿主。
-4. Windows 特别说明：Chrome/Edge 只通过注册表定位清单，应用不写注册表。需手工建键
-   `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.mda.fillhost`（Edge 把 `Google\Chrome`
-   换成 `Microsoft\Edge`），默认值指向 `%APPDATA%\com.mda.assistant\native-host\com.mda.fillhost.json`
-   —— **注意有 `native-host` 这一层**，且该文件要你自己按第 2 条写出来。
+2. **宿主清单由桌面应用启动时自动注册，不需要手工放置。** 应用装配完成后写出自管清单
+   `com.mda.fillhost.json`（数据目录下的 `native-host/`），并注册到浏览器能发现它的位置：
+   Windows 写 `HKCU` 注册表（当前用户自己的配置单元，**不需要管理员权限**），
+   macOS/Linux 写对应浏览器的 `NativeMessagingHosts` 目录。清单被删、注册表失配、
+   安装目录变化都会在下次启动自愈；在设置里改「浏览器扩展 ID」会立即重写。
+   注册失败只记日志、不影响启动，此时 **系统管理 → 安全设置** 的「宿主已自动注册」
+   徽标显示「未注册」，原因看启动日志。内容模板与逐平台位置见仓库 `docs/部署手册.md` §3.1。
+3. 清单注册好后需**重启浏览器**，扩展才能发现宿主。
+4. Windows 核对用（应用已代写，正常情况下不需要你动）：
+   `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.mda.fillhost` 与
+   `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.mda.fillhost`，默认值指向
+   `%APPDATA%\com.mda.assistant\native-host\com.mda.fillhost.json`
+   —— **注意有 `native-host` 这一层**。
    另：本扩展在端口断开时一律报「桌面应用未运行」，**宿主没装、注册表键缺失、清单路径写错
    也是同一句提示**，所以那句话不能用来判断应用是否真的在跑。
 5. **什么时候 ID 会变**：自己改源码、删掉 `key` 后重新加载（ID 由浏览器随机分配），
