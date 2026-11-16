@@ -26,7 +26,12 @@ jobs:
         # 那是另一套头文件与运行时。代价是 deb 的 glibc 底线上到 2.39
         # （Ubuntu 24.04+ / Debian 13+），22.04 及更老的发行版装不上。
         # 发布说明里必须写明这条，别让使用者下完才发现。
-        os: [macos-14, windows-latest, ubuntu-24.04]
+        # macOS 从 macos-14 换到 macos-26（arm64，产物仍是 aarch64.dmg）：macos-14 镜像
+        # 已被 GitHub 下线（2026-11-02 起，arm64 不在 Azure DevOps 延期范围内），job 会
+        # 1 秒内 cancelled 且零步骤，注解为 `The configuration 'macos-14-arm64-us-default'
+        # is not supported`。少一个 macOS 产物，publish 的 needs 与"没有 macOS 包就红"
+        # 那道门禁都会让整轮发不出 Release。镜像自带 Xcode 更新，最低系统版本以构建日志为准。
+        os: [macos-26, windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

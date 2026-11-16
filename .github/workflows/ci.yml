@@ -4,13 +4,18 @@ name: verify
 # 2026-10-26 修正：此前从未真正绿过——npm 10 校验不了本仓锁文件，
 # 且 src/lib/ipcContract.test.ts 的 F33 守卫在缺侧车时会红。
 # 与 release.yml 保持同一套前置，避免"发版绿、日常门禁红"的双口径。
+# 2026-11-16：macos-14 镜像已被 GitHub 下线（actions/runner-images 公告：All macOS 14
+# images retired from GitHub Actions on November 2, 2026，arm64 不在延期范围内）。
+# 症状不是编译红，而是 job 起来 1 秒就 cancelled、runner_name 为空、零步骤，
+# check-run 注解写着 `The configuration 'macos-14-arm64-us-default' is not supported`。
+# 本仓两个 job 都钉在 macos-14 上，所以从 11-12 起门禁一直是空跑。统一到 macos-26（arm64）。
 on:
   push:
   pull_request:
 
 jobs:
   frontend:
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -50,7 +55,7 @@ jobs:
         run: npm run verify
 
   backend:
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
