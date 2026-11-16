@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   ASSET_STEM,
-  STAGE_DIR_NAME,
   extensionIdFromKey,
   packExtension,
   readZipEntries,
@@ -18,8 +17,9 @@ import {
  *    `src-tauri/src/fill_host.rs` 的 `BUILTIN_EXTENSION_ID` 决定宿主清单的 `allowed_origins`。
  *    两侧各改一半 = 清单放行了一个不存在的 ID，填充全坏且界面看不出来。
  *    这条比对把两侧钉在一起（Rust 侧不做 sha256，推导只在这里做一次）。
- * 2. **包的结构**：顶层必须只有一枚目录、`manifest.json` 要在它的根部 ——
- *    多套一层，用户拖进扩展页就是"清单文件缺失"。
+ * 2. **包的结构**：文件直接躺在 zip 根、`manifest.json` 就在根上，且没有任何目录条目 ——
+ *    Windows「全部提取」必定再套一层以 zip 名命名的壳，zip 内若再套一层目录，
+ *    解压后 manifest 落在第二层，用户拖得到的那枚文件夹就报"清单文件缺失"。
  * 3. **可复现**：同输入两次打包字节相同，否则 Release 的 SHA256SUMS 会对不上。
  *
  * 期望条目从 `extension/` 的实测目录推导，不在此手写名单（名单会漏，少算也算绿）。
@@ -63,32 +63,30 @@ describe('发布扩展包', () => {
     expect(a.fileName).toBe(`${ASSET_STEM}-v${tauriVersion}.zip`);
   });
 
-  it('包根只有一枚顶层目录，manifest.json 在其根部', async () => {
+  it('文件直接在 zip 根、manifest.json 在根上，且没有目录条目', async () => {
     const { bytes } = await packExtension();
     const entries = readZipEntries(bytes);
     const names = entries.map((e) => e.name);
-    expect(new Set(names.map((n) => n.split('/')[0])), `顶层条目不唯一：${names.join(', ')}`).toEqual(
-      new Set([STAGE_DIR_NAME]),
-    );
-    expect(names).toContain(`${STAGE_DIR_NAME}/`);
-    expect(names).toContain(`${STAGE_DIR_NAME}/manifest.json`);
-    expect(names.sort()).toEqual([`${STAGE_DIR_NAME}/`, ...sourceFiles.map((n) => `${STAGE_DIR_NAME}/${n}`)].sort());
+    expect(names.filter((n) => n.endsWith('/')), `zip 里不该有目录条目：${names.join(', ')}`).toEqual([]);
+    expect(names.filter((n) => n.includes('/')), `zip 根下不该再套目录：${names.join(', ')}`).toEqual([]);
+    expect(names).toContain('manifest.json');
+    expect(names.sort()).toEqual([...sourceFiles].sort());
   });
 
   it('包里没有私钥类文件，且每条正文长度与源文件一致', async () => {
     const { bytes } = await packExtension();
     const entries = readZipEntries(bytes).filter((e) => !e.isDir);
     expect(entries.filter((e) => /\.(pem|key|p12|mobileprovision)$/.test(e.name))).toEqual([]);
-    for (const entry of entries.filter((e) => !e.name.endsWith('/manifest.json'))) {
+    for (const entry of entries.filter((e) => e.name !== 'manifest.json')) {
       // manifest 唯一被改写（盖版本号），它的差异由下一条用例逐字比对。
-      const onDisk = readFileSync(resolve(ROOT, 'extension', entry.name.split('/').pop()));
+      const onDisk = readFileSync(resolve(ROOT, 'extension', entry.name));
       expect(entry.uncompSize, `${entry.name} 的正文长度对不上`).toBe(onDisk.length);
     }
   });
 
   it('包内 manifest 的版本盖成 tauri.conf.json 的值，其余字段与源文件逐字一致', async () => {
     const { bytes, version } = await packExtension();
-    const packed = JSON.parse(readZipFile(bytes, `${STAGE_DIR_NAME}/manifest.json`).toString('utf8'));
+    const packed = JSON.parse(readZipFile(bytes, 'manifest.json').toString('utf8'));
     expect(packed.version, '版本盖章没生效').toBe(version);
     expect({ ...packed, version: manifest.version }, '包内清单与源清单的差异不止版本号').toEqual(manifest);
   });

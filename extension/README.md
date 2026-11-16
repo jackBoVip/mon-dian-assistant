@@ -10,14 +10,15 @@
 ### 方式 A：下载 Release 的 zip（推荐给使用者）
 
 1. 到本仓库 **Releases** 下载 `mon-dian-assistant-browser-extension-v<版本>.zip`，
-   解压后得到**一枚文件夹** `mon-dian-assistant-extension/`（`manifest.json` 就在它的根部）。
+   解压后得到**一枚文件夹**（Windows「全部提取」/ macOS 双击会以 zip 名命名它），
+   `manifest.json` 就在它的根部。zip 内**不套目录**，所以解压出来的那枚就是可拖的那枚。
 2. 浏览器**不接受把 .zip 直接拖进扩展页** —— 必须先解压。开启「开发者模式」后，
    把**那枚文件夹拖进**扩展管理页即可加载（Chrome/Edge 都支持拖文件夹）。
 3. 也可以按下面的手动路径选目录加载，两者等价。
 
 ### 方式 B：手动选目录（或直接从本仓库加载 `extension/`）
 
-以下路径指解压出来的 `mon-dian-assistant-extension/`，或本仓库的 `extension/` 目录。
+以下路径指解压出来的那枚文件夹（根下有 `manifest.json`），或本仓库的 `extension/` 目录。
 
 #### Chrome
 

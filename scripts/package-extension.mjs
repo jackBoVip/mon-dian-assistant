@@ -8,9 +8,11 @@
  * 用 node:zlib 的 deflateRaw，字节可复现。
  *
  * 三件不显眼但会咬人的事：
- *  - zip 的根只放一枚 `mon-dian-assistant-extension/`。解压出来必须正好是一个文件夹，
- *    因为 Chrome/Edge 只接受"把文件夹拖进扩展页"或"加载已解压的扩展程序"，
- *    拖 .zip 会被拒。顶层多一层目录 = 用户拖进去报"清单文件缺失"。
+ *  - zip 的根直接躺文件，`manifest.json` 就在根上，**不套任何目录**。Chrome/Edge 只接受
+ *    "把文件夹拖进扩展页"或"加载已解压的扩展程序"，拖 .zip 会被拒；而 Windows「全部提取」
+ *    必定再套一层以 zip 名命名的壳 —— zip 内若再套一层目录，解压后 manifest 落在第二层，
+ *    用户拖得到的那枚文件夹根下没有清单，报"清单文件缺失"（2026-11-16 交付方实撞）。
+ *    拍平后无论哪种解压器，得到的那枚文件夹根下就是 manifest.json，直接可拖。
  *  - 清单文件名必须纯 ASCII：GitHub 上传资源时会静默删掉非 ASCII 字符（v1.0.1 那轮
  *    中文名的 setup.exe 就是这么变成 `_0.1.0_x64-setup.exe` 而让 `sha256sum -c` 必失败的）。
  *  - manifest 的 `key` 是扩展私钥对应的 SPKI 公钥，扩展 ID 由它推导且**跨机器恒定**。
@@ -38,8 +40,6 @@ const EXT_DIR = join(ROOT, 'extension');
 const TAURI_CONF = join(ROOT, 'src-tauri', 'tauri.conf.json');
 const OUT_DIR = join(ROOT, 'dist-extension');
 
-/** zip 里唯一的顶层目录；解压后用户把这一枚拖进 chrome://extensions。 */
-export const STAGE_DIR_NAME = 'mon-dian-assistant-extension';
 /** 去掉 .zip 的资源名（ASCII，扩展名由 buildZipFileName 补）。 */
 export const ASSET_STEM = 'mon-dian-assistant-browser-extension';
 
@@ -71,7 +71,7 @@ function crc32(buf) {
  * 由 manifest 的 `key`（base64 SPKI 公钥）推导 Chrome 扩展 ID：
  * SHA-256(公钥 DER) 的前 16 字节，每个半字节按 0→a … 15→p 映射成 32 个字母。
  * 与 src-tauri/src/fill_host.rs 的 BUILTIN_EXTENSION_ID 必须一致，
- * 由 src/lib/extensionPack.test.ts 逐条比对。
+ * 由 scripts/extension-pack.test.mjs 逐条比对。
  */
 export function extensionIdFromKey(keyBase64) {
   const der = Buffer.from(keyBase64, 'base64');
@@ -86,7 +86,7 @@ export function extensionIdFromKey(keyBase64) {
   return id;
 }
 
-/** 读扩展源目录 → 白名单校验 → 版本盖章；返回 [{ name, content }]（name 已带顶层目录前缀）。 */
+/** 读扩展源目录 → 白名单校验 → 版本盖章；返回 [{ name, content }]（name 即 zip 根下的文件名）。 */
 async function collectEntries() {
   const listing = (await readdir(EXT_DIR, { withFileTypes: true }))
     .filter((e) => e.isFile())
@@ -128,12 +128,12 @@ async function collectEntries() {
       if (!/^[a-p]{32}$/.test(id)) throw new Error(`由 manifest.key 推导的扩展 ID 非法：${id}`);
       content = Buffer.from(`${JSON.stringify({ ...manifest, version }, null, 2)}\n`, 'utf8');
     }
-    entries.push({ name: `${STAGE_DIR_NAME}/${name}`, content });
+    entries.push({ name, content });
   }
   return entries;
 }
 
-/** 确定性 ZIP：目录条目在前，文件条目按名排序，固定时间戳，deflateRaw。 */
+/** 确定性 ZIP：文件条目按名排序、全部躺在根下，固定时间戳，deflateRaw。 */
 function buildZip(entries) {
   const chunks = [];
   const central = [];
@@ -144,18 +144,16 @@ function buildZip(entries) {
     offset += bytes.length;
   };
 
-  const records = [{ name: `${STAGE_DIR_NAME}/`, content: null }, ...entries];
-  for (const { name, content } of records) {
+  for (const { name, content } of entries) {
     const nameBuf = Buffer.from(name, 'utf8');
     // UTF-8 名称位（bit 11）：本包全 ASCII，置位只为防以后有人加中文名把解压端搞糊涂。
     const flags = 0x0800;
-    const isDir = content === null;
-    const raw = isDir ? Buffer.alloc(0) : content;
-    const deflated = isDir ? null : deflateRawSync(raw, { level: 9 });
-    const stored = isDir || deflated.length >= raw.length;
+    const raw = content;
+    const deflated = deflateRawSync(raw, { level: 9 });
+    const stored = deflated.length >= raw.length;
     const method = stored ? 0 : 8;
-    const body = isDir ? Buffer.alloc(0) : stored ? raw : deflated;
-    const crc = isDir ? 0 : crc32(raw);
+    const body = stored ? raw : deflated;
+    const crc = crc32(raw);
 
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
@@ -190,7 +188,7 @@ function buildZip(entries) {
     dir.writeUInt16LE(0, 32);
     dir.writeUInt16LE(0, 34);
     dir.writeUInt16LE(0, 36);
-    dir.writeUInt32LE(isDir ? 0x10 : 0, 38);
+    dir.writeUInt32LE(0, 38);
     dir.writeUInt32LE(localHeaderOffset, 42);
     central.push(dir, nameBuf);
   }
@@ -203,8 +201,8 @@ function buildZip(entries) {
   eocd.writeUInt32LE(0x06054b50, 0);
   eocd.writeUInt16LE(0, 4);
   eocd.writeUInt16LE(0, 6);
-  eocd.writeUInt16LE(records.length, 8);
-  eocd.writeUInt16LE(records.length, 10);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
   eocd.writeUInt32LE(centralBuf.length, 12);
   eocd.writeUInt32LE(centralOffset, 16);
   eocd.writeUInt16LE(0, 20);
@@ -263,7 +261,7 @@ export async function packExtension() {
   const bytes = buildZip(entries);
   const version = JSON.parse(await readFile(TAURI_CONF, 'utf8')).version;
   const manifest = JSON.parse(
-    (entries.find((e) => e.name.endsWith('/manifest.json')).content).toString('utf8'),
+    (entries.find((e) => e.name === 'manifest.json').content).toString('utf8'),
   );
   return {
     fileName: zipFileName(version),
@@ -287,19 +285,17 @@ async function assertReproducible() {
   if (!names.every((n) => /^[\x20-\x7e]+$/.test(n))) {
     throw new Error(`包内条目名含非 ASCII：${names.filter((n) => /[^\x20-\x7e]/.test(n)).join(', ')}`);
   }
-  if (names[0] !== `${STAGE_DIR_NAME}/`) {
-    throw new Error(`包根必须是唯一顶层目录 ${STAGE_DIR_NAME}/，实际第一条是 ${names[0]}`);
+  if (names.some((n) => n.includes('/'))) {
+    throw new Error(`zip 根下套了目录：${names.filter((n) => n.includes('/')).join(', ')}（Windows 解压会再套一层壳，manifest 就落到第二层）`);
   }
-  const roots = new Set(names.map((n) => n.split('/')[0]));
-  if (roots.size !== 1) throw new Error(`包里有多个顶层条目：${[...roots].join(', ')}`);
-  if (!names.includes(`${STAGE_DIR_NAME}/manifest.json`)) {
-    throw new Error('manifest.json 不在顶层目录根部，拖进去会报"清单文件缺失"');
+  if (!names.includes('manifest.json')) {
+    throw new Error('manifest.json 不在 zip 根上，解压后拖进去会报"清单文件缺失"');
   }
   // 逐条读回正文：只有名字与长度对上还不够，deflate  round-trip 坏了要到解压端才露馅。
   for (const entry of readZipEntries(first.bytes).filter((e) => !e.isDir)) {
-    const source = await readFile(join(EXT_DIR, entry.name.split('/').pop()));
+    const source = await readFile(join(EXT_DIR, entry.name));
     const packed = readZipFile(first.bytes, entry.name);
-    if (entry.name.endsWith('/manifest.json')) {
+    if (entry.name === 'manifest.json') {
       const a = JSON.parse(source.toString('utf8'));
       const b = JSON.parse(packed.toString('utf8'));
       if (b.version !== first.version || JSON.stringify({ ...b, version: a.version }) !== JSON.stringify(a)) {
