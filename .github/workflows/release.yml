@@ -381,20 +381,28 @@ jobs:
       - name: 整理成 Release 资源名并复算摘要
         run: |
           set -euo pipefail
+          version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -n1)"
           mkdir -p out
+          # 资源名约定（交付方 2026-11-16 点名）：产品_版本_平台-arch，纯 ASCII。
+          # 旧名 Windows-x64-setup.exe / macOS-aarch64.dmg 看不出产品与版本，arch 还是工具链黑话。
           for d in dl/packages-*; do
             while IFS= read -r -d '' f; do
               b="$(basename "$f")"
               case "$b" in
-                *.dmg)       a="${b%.dmg}";       cp "$f" "out/macOS-${a##*_}.dmg" ;;
+                *.dmg)
+                  a="${b%.dmg}"; arch="${a##*_}"
+                  # bundle 名里是 rust triple 的 arch（aarch64），发布面用 Apple 口径 arm64。
+                  [ "$arch" = "aarch64" ] && arch="arm64"
+                  [ "$arch" = "x86_64" ] && arch="x64"
+                  cp "$f" "out/mon-dian-assistant_${version}_macos-${arch}.dmg" ;;
                 # NSIS 的产物名结尾是 `_x64-setup.exe`，不是 `_setup.exe`。原先那枚
                 # `*_setup.exe` 分支从没接住过（build.17 是 publish job 第一次真跑，当场露馅）：
                 # 中文原名落进 out/，GitHub 上传时静默删掉非 ASCII 字符，
                 # `蒙电信产助手_0.1.0_x64-setup.exe` 就成了 `_0.1.0_x64-setup.exe`，
                 # 而 SHA256SUMS.txt 记的还是上传前那个名字 —— 使用者 `sha256sum -c` 必失败。
-                *.exe)       cp "$f" "out/Windows-x64-setup.exe" ;;
-                *.deb)       a="${b%.deb}";       cp "$f" "out/Linux-${a##*_}.deb" ;;
-                *.AppImage)  a="${b%.AppImage}";  cp "$f" "out/Linux-${a##*_}.AppImage" ;;
+                *.exe)       cp "$f" "out/mon-dian-assistant_${version}_windows-x64-setup.exe" ;;
+                *.deb)       a="${b%.deb}";       cp "$f" "out/mon-dian-assistant_${version}_linux-${a##*_}.deb" ;;
+                *.AppImage)  a="${b%.AppImage}";  cp "$f" "out/mon-dian-assistant_${version}_linux-${a##*_}.AppImage" ;;
                 *)           cp "$f" "out/$b" ;;
               esac
             done < <(find "$d" -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) -print0)
@@ -402,7 +410,7 @@ jobs:
           # 摘要按最终资源名重算：包内自带的清单记的是各 runner 上的 bundle 相对路径。
           ( cd out && sha256sum -- * > ../SHA256SUMS.txt )
           mv SHA256SUMS.txt out/
-          test -n "$(find out -name 'macOS-*.dmg' -print -quit)" || { echo "::error::没有 macOS 包"; exit 1; }
+          test -n "$(find out -name "mon-dian-assistant_${version}_macos-*.dmg" -print -quit)" || { echo "::error::没有 macOS 包"; exit 1; }
           # 资源名必须纯 ASCII：上传那一步 GitHub 会静默删掉非 ASCII 字符（见上面 *.exe 分支那条），
           # 到那时清单里的名字就对不上了。宁可在这里就红，不要把一个 `-c` 必失败的 Release 发出去。
           if LC_ALL=C grep -q '[^ -~]' out/SHA256SUMS.txt; then
@@ -426,10 +434,10 @@ jobs:
           cat > release-notes.md <<EOF
           三端安装包由 GitHub Actions 的原生 runner 产出（commit ${GITHUB_SHA}）。
 
-          - macOS：\`macOS-<arch>.dmg\`（未签名，ad-hoc；其它 Mac 上 Gatekeeper 会拦）
-          - Windows：\`Windows-x64-setup.exe\`（NSIS；msi 未产出，WiX ICE30）
-          - Linux：\`Linux-amd64.deb\` + \`Linux-amd64.AppImage\`（rpm 未产出，Tauri 侧 externalBin 重复登记）
-            - \`Linux-amd64.deb\` 在 Ubuntu 24.04 runner 上构建，**要求 glibc ≥ 2.39**：Ubuntu 24.04+ 与 Debian 13+ 可直接装，22.04 及更老的发行版装不上（答题助手的截屏库在 Linux 上必须链 pipewire，而 22.04 的头文件太旧）。AppImage 自带大部分运行库，但同样受 glibc 下限约束。
+          - macOS：\`mon-dian-assistant_${version}_macos-arm64.dmg\`（未签名，ad-hoc；其它 Mac 上 Gatekeeper 会拦）
+          - Windows：\`mon-dian-assistant_${version}_windows-x64-setup.exe\`（NSIS；msi 未产出，WiX ICE30）
+          - Linux：\`mon-dian-assistant_${version}_linux-amd64.deb\` + \`mon-dian-assistant_${version}_linux-amd64.AppImage\`（rpm 未产出，Tauri 侧 externalBin 重复登记）
+            - \`mon-dian-assistant_${version}_linux-amd64.deb\` 在 Ubuntu 24.04 runner 上构建，**要求 glibc ≥ 2.39**：Ubuntu 24.04+ 与 Debian 13+ 可直接装，22.04 及更老的发行版装不上（答题助手的截屏库在 Linux 上必须链 pipewire，而 22.04 的头文件太旧）。AppImage 自带大部分运行库，但同样受 glibc 下限约束。
           - \`SHA256SUMS.txt\` 按上面这些资源名计算，下载后先 \`sha256sum -c\` 再装
           - 浏览器扩展：\`mon-dian-assistant-browser-extension-v${version}.zip\`。解压出来是**一枚文件夹**
             （Windows「全部提取」/ macOS 双击以 zip 名命名它），\`manifest.json\` 就在它的根部；
