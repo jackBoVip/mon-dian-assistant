@@ -54,6 +54,31 @@ pub fn ensure_window(app: &AppHandle) -> Result<WebviewWindow> {
     Ok(w)
 }
 
+/// 从同步 command 的调用栈之外预建浮层窗口。
+///
+/// 同步 command 跑在 WebView 的 IPC 回调栈上（即主线程）。在那里直接调用
+/// [`ensure_window`] 会嵌套创建 WebView2 窗口，和主线程消息循环互等，导致
+/// 整个界面卡死——数据加载不出、窗口也关不掉。这与 `lib.rs::finish_boot`
+/// 里启动器窗口踩过的坑是同一个：wry 的 `send_user_message` 在「当前线程
+/// 就是主线程」时会**同步执行**任务，所以 `run_on_main_thread` 直接调等于
+/// 没挪出调用栈。必须从一条非主线程发出，才会走 proxy 排队，等 command
+/// 返回后由事件循环取出执行。
+///
+/// 这是增强功能：建窗失败只记日志，悬停线程首次命中时 `show()` 还会再建一次。
+pub fn ensure_window_deferred(app: &AppHandle) {
+    let outer = app.clone();
+    std::thread::spawn(move || {
+        let inner = outer.clone();
+        if let Err(e) = outer.run_on_main_thread(move || {
+            if let Err(e) = ensure_window(&inner) {
+                log::warn!("答题浮层窗口预建失败：{}（首次命中时会再试）", e.code());
+            }
+        }) {
+            log::warn!("答题浮层窗口预建未能排入主线程：{e}");
+        }
+    });
+}
+
 /// 显示浮层并把它放到取景带之外。返回是否真的显示（放不下时为 false）。
 pub fn show(app: &AppHandle, band: &Band, hit: MatchHit, show_options: bool) -> Result<bool> {
     let cursor = (band.origin_x + band.cursor_x, band.origin_y + band.cursor_y);

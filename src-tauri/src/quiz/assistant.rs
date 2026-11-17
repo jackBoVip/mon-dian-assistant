@@ -152,7 +152,8 @@ pub fn start(app: &AppHandle, core: &SharedCore, user: &str, prefs: &AssistantPr
         }
     }
 
-    tip::ensure_window(app)?;
+    // 浮层窗由 spawn_thread 从非主线程派发预建（见 tip::ensure_window_deferred）：
+    // 绝不能在这条同步 command 的主线程栈里建 WebView2 窗口，否则界面卡死。
     register_hotkey(app, core, &prefs.hotkey)?;
     store::set_assistant_enabled(&core.db, user, true)?;
     spawn_thread(app, core, user, prefs)?;
@@ -355,9 +356,10 @@ fn spawn_thread(app: &AppHandle, core: &SharedCore, user: &str, prefs: &Assistan
     let app_handle = app.clone();
     let core_handle: SharedCore = Arc::clone(core);
     let stop_flag = Arc::clone(&stop);
-    // 先把浮层窗口建出来：建窗 + 加载页面要几百毫秒，放在启用这一刻付掉，
-    // 而不是让第一次命中答案的人多等一次。失败就算了，命中时还会再试。
-    let _ = tip::ensure_window(app);
+    // 预建浮层窗口：这条函数的所有调用方（start/restart/toggle）都在同步 command
+    // 的主线程栈上，绝不能在这里同步建 WebView2 窗口，否则整个界面卡死。
+    // 从非主线程派发排队建窗；失败就算了，悬停线程首次命中时 show() 还会再建。
+    tip::ensure_window_deferred(app);
     let handle = std::thread::Builder::new()
         .name("mda-quiz-hover".into())
         .spawn(move || hover_loop(app_handle, core_handle, cfg, epoch, stop_flag))
