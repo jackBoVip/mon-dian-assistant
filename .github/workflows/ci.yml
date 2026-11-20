@@ -1,21 +1,41 @@
 name: verify
 
-# 最小门禁：三道门 + Rust 测试。
-# 2026-10-26 修正：此前从未真正绿过——npm 10 校验不了本仓锁文件，
-# 且 src/lib/ipcContract.test.ts 的 F33 守卫在缺侧车时会红。
-# 与 release.yml 保持同一套前置，避免"发版绿、日常门禁红"的双口径。
-# 2026-11-16：macos-14 镜像已被 GitHub 下线（actions/runner-images 公告：All macOS 14
-# images retired from GitHub Actions on November 2, 2026，arm64 不在延期范围内）。
-# 症状不是编译红，而是 job 起来 1 秒就 cancelled、runner_name 为空、零步骤，
-# check-run 注解写着 `The configuration 'macos-14-arm64-us-default' is not supported`。
-# 本仓两个 job 都钉在 macos-14 上，所以从 11-12 起门禁一直是空跑。统一到 macos-26（arm64）。
+# 三端门禁：Windows / macOS / Linux 各跑一遍完整的前后端验证。
+# 2026-11-19 修正：此前 frontend / backend 两个 job 都只钉在 macos-26，
+# 于是「账号导入」这类跨平台改动在 Windows 与 Linux 上从未被日常门禁验证。
+# release.yml 虽已有三端矩阵，但只在打 v* tag / 手动 dispatch 时触发，
+# 不能充当每次 push / PR 的判据。这里把同一套平台前置搬进日常矩阵。
+#
+# 与 release.yml 保持同一套前置与判据，避免「发版绿、日常门禁红」的双口径：
+# - npm 10 校验不了本仓锁文件（@tailwindcss/oxide-wasm32-wasi 那组 bundled
+#   可选依赖报 EUSAGE），钉死 Node 24 + npm 11.6.2，与开发机一致。
+# - macos-14 镜像 2026-11-02 被 GitHub 下线（arm64 不在延期范围内），统一 macos-26。
+# - npm run verify 的 F33 守卫要求 binaries/ 里已有带 target triple 的侧车；
+#   tauri_build 同样要求 externalBin 先存在。干净检出上必须先跑
+#   scripts/prepare-host-binary.sh，否则前端静态契约与 cargo test 都会红。
+# - SQLCipher 不是 pkg-config 提供的系统库：Cargo.toml 用的是
+#   rusqlite 的 bundled-sqlcipher + bundled-sqlcipher-vendored-openssl，
+#   即每个平台都要在本机编一份 OpenSSL。Windows 因此必须用**原生** Perl
+#   （Strawberry），Git for Windows 的 MSYS/cygwin perl 会被 OpenSSL Configure
+#   以「doesn't produce Windows like paths」直接拒绝；这也是下面 Windows 前置的由来。
 on:
   push:
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  frontend:
-    runs-on: macos-26
+  verify:
+    name: verify (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # 与 release.yml 的三端产物矩阵保持同一组 runner，门禁通过即可打包。
+        # Linux 必须是 24.04：答题助手的截屏库 xcap 无条件链 pipewire，
+        # 22.04 的 libspa 头文件缺 API，编译期就红（见 release.yml 矩阵注释）。
+        os: [macos-26, windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,8 +49,6 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # 开发机 npm 11.6.2 能过同一份锁；Node 22 的 npm 10 会因
-          # @tailwindcss/oxide-wasm32-wasi 那组 bundled 可选依赖报 EUSAGE。
           node-version: '24'
           cache: npm
 
@@ -43,36 +61,99 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Windows 构建前置（原生 Perl 与 nasm）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # rusqlite 的 vendored OpenSSL 要在本机 Configure + nmake。
+          # GitHub Windows runner 的 PATH 上 git-bash 的 MSYS perl 排在前面，
+          # 那份 perl 既缺 Params::Check / IPC::Cmd / Locale::Maketext::Simple，
+          # 又是 cygwin 版（OpenSSL Configure 明确拒绝非 MSWin32 的 perl）。
+          # 处置与 release.yml 完全一致：把 Strawberry perl 提到 PATH 最前并钉 PERL。
+          "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm -y --no-progress
+            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          & "C:\Strawberry\perl\bin\perl.exe" -MLocale::Maketext::Simple -MParams::Check -MIPC::Cmd -e "1"
+          Write-Host "strawberry perl modules ok"
+          "PERL=C:\Strawberry\perl\bin\perl.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Linux 构建依赖（Tauri v2 官方前置）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf \
+            libpipewire-0.3-dev libgbm-dev libdrm-dev
+          # 后三个是答题助手截屏库 xcap 的硬依赖：少了头文件编译期红，
+          # 少了 .so 链接期红。日常门禁不产包，因此不需要 release.yml 里的 rpm。
 
       - name: 构建本 triple 的 Native Messaging 侧车（必须先于前端门禁）
-        # src/lib/ipcContract.test.ts 的 F33 守卫要求 binaries/ 里已有带 target triple
-        # 的宿主，否则 `npm run verify` 就红。本机因为早有侧车而看不出来。
+        # F33 守卫 + tauri_build 都要求 externalBin 的
+        # binaries/mda_fill_host-<triple> 先存在；本机有产物时看不出来，干净检出必崩。
         shell: bash
-        run: bash scripts/prepare-host-binary.sh
+        run: |
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            # GITHUB_PATH 的前置对 git-bash 不生效：bash 会把 MSYS 自己的 /usr/bin
+            # 排在最前，openssl-src 于是又取到那份 cygwin perl。这里在 bash 内再前置一次。
+            export PATH="/c/Strawberry/perl/bin:$PATH"
+          fi
+          echo "perl in use: $(perl -e 'print $^X')"
+          bash scripts/prepare-host-binary.sh
 
-      - run: npm ci
+      - name: npm ci
+        run: npm ci
+
       - name: 类型 + 构建 + 单测（含样式对账与静态契约）
+        # 三端都跑：账号导入弹窗 / 允许填充 Origin 表单的契约测试在这里。
         run: npm run verify
 
-  backend:
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: 缓存 cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
-      - name: 侧车必须在 cargo test 之前（干净检出上没有它）
-        # 第一次真跑（5dca02e）就红在这里：`cargo test --all-targets` 编本 crate 会先
-        # 跑 tauri_build，而它要求 externalBin 的 binaries/mda_fill_host-<triple> 先存在。
-        # 开发机因为 binaries/ 早有产物（gitignore）从不暴露，干净检出必崩。
-        shell: bash
-        run: bash scripts/prepare-host-binary.sh
-      - name: cargo test（SQLCipher 由 pkg-config 提供）
+      - name: cargo test（后端全量 · macOS / Linux）
+        if: runner.os != 'Windows'
         working-directory: src-tauri
+        # 包含 importexport 单元测试与 import_e2e / container_e2e /
+        # xlsx_browser_export / fill_channel_http 等集成测试：
+        # Chrome 五列导入派生纯 Origin、账号级 upsert、票据绑定都在这一批里。
         run: cargo test --all-targets
+
+      - name: cargo test（后端全量 · Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: src-tauri
+        run: |
+          # 裸测试 exe 没有嵌入 Common-Controls v6 manifest，加载期会
+          # 0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND（TaskDialogIndirect 等符号只存在于
+          # comctl32 v6，而 v6 只能靠激活上下文加载）。应用包由 bundler 带 manifest，
+          # 测试 exe 没有，所以 Windows 上必须显式补；不通过就继续红，不静默跳过测试。
+          $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+          if (-not $mt) { throw 'Windows SDK mt.exe 未找到，无法给测试 exe 嵌入 Common-Controls 清单' }
+          $sdkBin = Split-Path $mt.FullName
+          $env:PATH = "$sdkBin;$env:PATH"
+          $manifest = Join-Path $env:RUNNER_TEMP 'comctl6.manifest'
+          @'
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls"
+                  version="6.0.0.0" processorArchitecture="*"
+                  publicKeyToken="6595b64144ccf1df" language="*"/>
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          '@ | Set-Content -Encoding utf8 $manifest
+          # `-C link-args=` 只吃一个 token，所以拆成两条；
+          # 并且必须按目标类型分开跑：tauri-build 已给每个 bin 目标嵌了一份
+          # MANIFEST 资源，再叠一份就是 CVTRES CVT1100 duplicate resource。
+          $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS =
+            '-C link-args=/MANIFEST:EMBED -C link-args=/MANIFESTINPUT:' + $manifest
+          cargo test --lib --tests --benches
+          Remove-Item Env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS
+          cargo test --bins
