@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isTauri, api } from '../../lib/api';
-import { invalidateTargetLists, queryKeys } from '../../lib/queryClient';
+import { invalidateTargetDetails, invalidateTargetLists, queryKeys } from '../../lib/queryClient';
 import { openFile, saveFileDialog, saveTextFile } from '../../lib/dialogs';
 import { toNormalisedError } from '../../lib/errors';
 import { notify } from '../../state/notify';
@@ -149,6 +149,9 @@ export function SystemIODialog({ open, mode, format, targetId, targetName, onClo
       setPreview(null);
       setPicked(null);
       invalidateTargetLists(qc);
+      // 导入会整批改写主体元数据（Origin 自愈就在其中），详情缓存不一起作废的话，
+      // 紧接着打开「编辑系统」会拿补之前的旧值再写回去。
+      invalidateTargetDetails(qc);
       void qc.invalidateQueries({ queryKey: queryKeys.groups });
       void qc.invalidateQueries({ queryKey: queryKeys.stats });
       notify('success', importSummary(res));

@@ -202,7 +202,7 @@ pub fn target_detail(target_id: String) -> Result<TargetDetail> {
     let insecure_protocol = insecure_flag(&target, &meta, allow_weak);
     Ok(TargetDetail {
         target,
-        meta: meta.clone(),
+        meta: meta.into(),
         items,
         insecure_protocol,
         fill_available: extension_gate(&core),

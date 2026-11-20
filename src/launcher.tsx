@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { LauncherApp } from './launcher/LauncherApp';
 import { createQueryClient } from './lib/queryClient';
 import { useTheme } from './state/theme';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import './styles/tokens.css';
 import './styles/global.css';
 
@@ -16,9 +17,11 @@ if (!container) {
 }
 
 createRoot(container).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <LauncherApp />
-    </QueryClientProvider>
-  </StrictMode>,
+  <ErrorBoundary>
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <LauncherApp />
+      </QueryClientProvider>
+    </StrictMode>
+  </ErrorBoundary>,
 );

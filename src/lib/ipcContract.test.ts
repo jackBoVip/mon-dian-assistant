@@ -292,3 +292,215 @@ describe('右栏嵌入块同样拿不到 IPC（右栏能直接操作的前提）
     expect(caps.windows).not.toContain('page-pane');
   });
 });
+
+/**
+ * 2026-11-20「修改目标系统整页空白」复盘立下的三条守卫。
+ *
+ * 那次事故的形状是：响应结构体 `TargetDetail` 带了 `rename_all = "camelCase"`，
+ * 但它嵌套的 `meta` 用的是存储结构体 `TargetSecretPayload`（snake_case），而 **serde 的
+ * rename_all 不传导到嵌套结构体**。前端 `types.ts` 把这些键声明成必填非可选 → 运行时
+ * undefined → 渲染期 `.trim()` 抛错；又因为没有根级错误边界，整棵树被卸载成白屏。
+ * 875 条前端测试全绿没拦住，因为组件测试的 mock 是照着 `types.ts` 那句**错误注释**写的。
+ *
+ * 所以这里的清单一律**由被检对象推导**（扫源码，不手写文件名），并配一枚探针证明扫得到。
+ */
+describe('响应序列化契约：嵌套结构体不许漏掉 camelCase', () => {
+  interface RsStruct {
+    file: string;
+    name: string;
+    serialize: boolean;
+    camel: boolean;
+    body: string;
+    multiWordFields: string[];
+  }
+
+  /** 从一份 Rust 源码里扫出所有 pub struct 及其紧邻属性块。 */
+  const scanStructs = (src: string, file: string): RsStruct[] => {
+    const out: RsStruct[] = [];
+    for (const m of src.matchAll(/pub struct ([A-Z][A-Za-z0-9_]*)\s*\{([\s\S]*?)\n\}/g)) {
+      const attrs: string[] = [];
+      const lines = src.slice(0, m.index).split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const l = lines[i].trim();
+        if (l === '' || l.startsWith('//') || l.startsWith('/*') || l.startsWith('*')) continue;
+        if (l.startsWith('#[')) {
+          attrs.unshift(l);
+          continue;
+        }
+        break;
+      }
+      const attrText = attrs.join(' ');
+      out.push({
+        file,
+        name: m[1],
+        serialize: /derive\([^)]*\bSerialize\b/.test(attrText),
+        camel: attrText.includes('rename_all = "camelCase"'),
+        body: m[2],
+        multiWordFields: [...m[2].matchAll(/^\s*pub ([a-z][a-z0-9_]*_[a-z0-9_]*)\s*:/gm)].map((x) => x[1]),
+      });
+    }
+    return out;
+  };
+
+  const walk = (dir: string): string[] =>
+    readdirSync(join(ROOT, dir), { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)],
+    );
+  const rustFiles = walk('src-tauri/src').filter((f) => f.endsWith('.rs'));
+  const all = rustFiles.flatMap((f) => scanStructs(read(f), f));
+  const serializable = all.filter((s) => s.serialize);
+
+  /**
+   * 存储侧结构体：JSON 键同时是**加密落库格式**（seal_json / open_json），
+   * 改名会让已存库全部命中 `#[serde(default)]` 静默读空，所以它们必须保持 snake_case。
+   * 正因为它们是例外，下面第二条要求它们**永远不许直接出现在任何响应结构体里**。
+   */
+  const STORAGE_ONLY = ['TargetSecretPayload', 'CredentialPayload'];
+
+  const violations = serializable
+    .filter((s) => s.multiWordFields.length > 0 && !s.camel)
+    .filter((s) => !STORAGE_ONLY.includes(s.name))
+    .map((s) => `${s.file} :: ${s.name}`);
+
+  it('扫描本身有效：合成样本里的漏网结构必须被抓到（探针）', () => {
+    const fixture = [
+      '#[derive(Serialize)]',
+      '#[serde(rename_all = "camelCase")]',
+      'pub struct Outer {',
+      '    pub id: String,',
+      '    pub inner: Inner,',
+      '}',
+      '#[derive(Serialize)]',
+      'pub struct Inner {',
+      '    pub allowed_origin: String,',
+      '}',
+    ].join('\n');
+    const found = scanStructs(fixture, 'fixture.rs');
+    expect(found.map((s) => s.name)).toEqual(['Outer', 'Inner']);
+    expect(found.find((s) => s.name === 'Inner')?.camel).toBe(false);
+    expect(found.find((s) => s.name === 'Inner')?.multiWordFields).toEqual(['allowed_origin']);
+    // 同样的判据用在样本上必须报出 Inner
+    const bad = found.filter(
+      (s) => s.serialize && s.multiWordFields.length > 0 && !s.camel && !STORAGE_ONLY.includes(s.name),
+    );
+    expect(bad.map((s) => s.name)).toEqual(['Inner']);
+  });
+
+  it('扫描面不为空：至少扫到 100 个可序列化结构体与 300 个多词字段（掉下来说明扫法变了）', () => {
+    expect(serializable.length, `只扫到 ${serializable.length} 个 derive(Serialize) 结构体`).toBeGreaterThanOrEqual(100);
+    const words = serializable.reduce((n, s) => n + s.multiWordFields.length, 0);
+    expect(words, `只扫到 ${words} 个多词字段`).toBeGreaterThanOrEqual(300);
+  });
+
+  it('除存储侧两个结构体外，所有可序列化结构体的多词字段都必须走 camelCase', () => {
+    expect(violations, '这些结构体有线上键名风险：' + violations.join('、')).toEqual([]);
+  });
+
+  it('存储侧结构体仍在（例外表不许过期），且不许出现在任何命令返回类型的可达集里', () => {
+    for (const name of STORAGE_ONLY) {
+      const s = all.find((x) => x.name === name);
+      expect(s, `${name} 不在了：例外表要一起删，否则这条守卫会假绿`).toBeTruthy();
+      expect(s!.camel, `${name} 被加了 rename_all：会改变加密落库的 JSON 键，旧库将静默读空`).toBe(false);
+    }
+
+    // 响应根 = 命令函数的返回类型名（Result<T> / Result<Vec<T>> / Result<Option<T>>）
+    const cmdSrc = walk('src-tauri/src/commands')
+      .filter((f) => f.endsWith('.rs'))
+      .map(read)
+      .join('\n');
+    const roots = new Set<string>();
+    for (const m of cmdSrc.matchAll(/->\s*Result<\s*(?:Vec<|Option<)?\s*([A-Z][A-Za-z0-9_]*)/g)) roots.add(m[1]);
+    expect(roots.size, '一条命令返回类型都没扫到，本条守卫要重写').toBeGreaterThan(20);
+
+    // 沿字段类型做可达闭包（含 repo:: 前缀与泛型实参）
+    const byName = new Map<string, string>();
+    for (const s of all) if (!byName.has(s.name)) byName.set(s.name, s.body);
+    const seen = new Set<string>();
+    const queue = [...roots];
+    while (queue.length) {
+      const n = queue.pop()!;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      const body = byName.get(n);
+      if (!body) continue;
+      for (const m of body.matchAll(/:\s*(?:(?:Vec|Option)<\s*)?(?:[a-z_]+::)*([A-Z][A-Za-z0-9_]*)/g)) {
+        if (!seen.has(m[1])) queue.push(m[1]);
+      }
+    }
+    const leaked = STORAGE_ONLY.filter((name) => seen.has(name));
+    expect(
+      leaked,
+      '存储结构体直接进了响应可达集，需要一层 camelCase 视图（2026-11-20 白屏的成因）：' + leaked.join('、'),
+    ).toEqual([]);
+  });
+});
+
+describe('两条查询卫生：详情取单行、翻页有次级键', () => {
+  const repo = read('src-tauri/src/db/repo.rs');
+
+  it('get_target_row 不许走 list_targets（打开一条系统详情 = 全表扫 + 每行一个 COUNT）', () => {
+    const body = repo.match(/pub fn get_target_row[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(body, 'get_target_row 没找到，本条守卫要重写').not.toBe('');
+    expect(body, '取一条主体却把全表连同行数子查询都算了一遍').not.toMatch(/list_targets\s*\(/);
+    expect(body).toMatch(/WHERE t\.id\s*=\s*\?1/);
+  });
+
+  it('分页排序必须有唯一次级键（updated_at 同秒并列会让翻页丢行或重行）', () => {
+    const paged = repo.match(/ORDER BY t\.updated_at DESC[^"]*/)?.[0] ?? '';
+    expect(paged, '分页那句 ORDER BY 找不到了，本条守卫要重写').not.toBe('');
+    expect(paged, '只按 updated_at 排，同值并列时 OFFSET 翻页会漏行/重行').toMatch(/,\s*t\.id\s+DESC/);
+  });
+});
+
+describe('三个窗口入口都必须套根级错误边界', () => {
+  const ENTRIES = ['src/main.tsx', 'src/launcher.tsx', 'src/quiztip.tsx'];
+
+  for (const entry of ENTRIES) {
+    it(`${entry}：createRoot(...).render 的最外层是 ErrorBoundary`, () => {
+      const src = read(entry);
+      expect(src, `${entry} 没引 ErrorBoundary`).toContain("from './components/ui/ErrorBoundary'");
+      // 边界必须在 createRoot 那一层之外：包在 App 里面就兜不住入口自身抛错。
+      // 先摘掉注释行，否则"因为写了注释而判红"这种假阳性会把守卫磨成人人想删的东西。
+      const after = src.match(/createRoot\(container\)\.render\(\s*([\s\S]{0,240})/)?.[1] ?? '';
+      const root = after
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l !== '' && !l.startsWith('//'))
+        .join('\n');
+      expect(root, `${entry} 的 render 根节点不是 ErrorBoundary（拆掉它就回到整页空白那个形状）`).toMatch(
+        /^<ErrorBoundary>/,
+      );
+    });
+  }
+
+  it('入口清单由"谁真的调了 createRoot"推导，新开一扇窗漏包会在这里红', () => {
+    const entryFiles = readdirSync(join(ROOT, 'src'))
+      .filter((f) => f.endsWith('.tsx'))
+      .map((f) => `src/${f}`)
+      .filter((p) => read(p).includes('createRoot('));
+    expect(entryFiles.sort(), `扫到的入口是 ${entryFiles.join('、')}，与守卫里那张表不一致：要么漏包，要么该把新入口加进来`).toEqual(
+      [...ENTRIES].sort(),
+    );
+  });
+});
+
+describe('导入改写元数据后，详情缓存要一起作废', () => {
+  const sysio = read('src/components/accounts/SystemIODialog.tsx');
+
+  it('importCommit 成功路径同时作废列表族与 targetDetail 族', () => {
+    const ok = sysio.match(/onSuccess: \(res\) => \{[\s\S]*?\n    \}/)?.[0] ?? '';
+    expect(ok, '找不到导入提交的成功分支，本条守卫要重写').not.toBe('');
+    expect(ok).toContain('invalidateTargetLists(qc)');
+    // 导入的 Origin 自愈会改写库里已有主体的 meta；详情缓存 staleTime 15s，
+    // 不作废就会让"打开编辑 → 保存"把刚补好的值又写回旧值。
+    expect(ok, '导入改了主体元数据却没作废详情缓存').toContain('invalidateTargetDetails(qc)');
+  });
+
+  it('作废函数确实打到 targetDetail 前缀，而不是只有名字像', () => {
+    const qc = read('src/lib/queryClient.ts');
+    const body = qc.match(/export function invalidateTargetDetails[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(body, 'invalidateTargetDetails 没找到，本条守卫要重写').not.toBe('');
+    expect(body).toMatch(/queryKeys\.targetDetailAll|queryKeys\.targetDetail\b/);
+    expect(qc).toMatch(/targetDetailAll: \['targetDetail'\]/);
+  });
+});

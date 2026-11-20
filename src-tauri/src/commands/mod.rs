@@ -288,10 +288,52 @@ pub(crate) fn merge_payload(base: repo::CredentialPayload, patch: &UpdateItemInp
 #[serde(rename_all = "camelCase")]
 pub struct TargetDetail {
     pub target: repo::TargetRow,
-    pub meta: repo::TargetSecretPayload,
+    pub meta: TargetMetaView,
     pub items: Vec<repo::ItemRow>,
     pub insecure_protocol: bool,
     pub fill_available: bool,
+}
+
+/// `target_detail` 响应里 meta 那一层的视图。
+///
+/// 存在的理由是一条 serde 细节：外层结构体的 `rename_all` **不传导到嵌套结构体**，
+/// 而前端 `src/lib/types.ts` 的 `TargetMeta` 按 camelCase 读、且把这些键声明为必填非可选。
+/// 直接把存储用的 `repo::TargetSecretPayload` 放进展望里，线上就是 `allowed_origin` /
+/// `database_name`，前端读到 undefined —— 「编辑系统」弹窗在渲染期对它调 `.trim()`，
+/// 于是整页空白（交付方 2026-11-20 报的那条）。
+///
+/// **存储侧那层刻意不动**：`TargetSecretPayload` 的 JSON 键同时是加密落库的格式
+/// （`seal_json` / `open_json`），给它加 `rename_all` 会让已存库里的 snake 键全部命中
+/// `#[serde(default)]` → 每个目标的地址/主机/端口静默读成空串，不报错、不可逆。
+/// 所以换名只发生在出线上这一层。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetMetaView {
+    pub url: String,
+    pub allowed_origin: String,
+    pub host: String,
+    pub port: String,
+    pub database_name: String,
+    pub tenant: String,
+    pub vendor: String,
+    pub protocol: String,
+    pub extra: std::collections::BTreeMap<String, String>,
+}
+
+impl From<repo::TargetSecretPayload> for TargetMetaView {
+    fn from(p: repo::TargetSecretPayload) -> Self {
+        Self {
+            url: p.url,
+            allowed_origin: p.allowed_origin,
+            host: p.host,
+            port: p.port,
+            database_name: p.database_name,
+            tenant: p.tenant,
+            vendor: p.vendor,
+            protocol: p.protocol,
+            extra: p.extra,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -478,5 +520,89 @@ mod tests {
         assert!(m.token.is_empty(), "显式空串表示清空令牌");
         assert_eq!(m.private_key.expose(), "PRIVATE-KEY");
         assert!(!m.confirm_before_fill);
+    }
+
+    fn target_row() -> repo::TargetRow {
+        repo::TargetRow {
+            id: "t1".into(),
+            target_type: "web".into(),
+            display_name: "蒙电OA".into(),
+            group_id: None,
+            status: "active".into(),
+            created_at: "2026-11-20T00:00:00Z".into(),
+            updated_at: "2026-11-20T00:00:00Z".into(),
+            credential_count: 1,
+        }
+    }
+
+    /// `target_detail` 出线的 meta 层必须是 camelCase。前端 `src/lib/types.ts` 的 `TargetMeta`
+    /// 把 `allowedOrigin` / `databaseName` 声明成必填非可选，而外层 `TargetDetail` 的
+    /// `rename_all` **不传导到嵌套结构体**：直接放存储用的 `repo::TargetSecretPayload` 时，
+    /// 线上是 `allowed_origin` / `database_name`，前端读到的就是 undefined。
+    /// 「编辑系统」弹窗在渲染期对它调 `.trim()` → 抛错 → 整页空白（交付方 2026-11-20 报的这条）。
+    #[test]
+    fn target_detail_meta_went_out_with_the_keys_the_frontend_declares() {
+        let payload = repo::TargetSecretPayload {
+            url: "https://oa.example.cn/login".into(),
+            allowed_origin: "https://oa.example.cn".into(),
+            host: "oa.example.cn".into(),
+            port: "443".into(),
+            database_name: "impcc".into(),
+            tenant: "总部".into(),
+            vendor: "用友".into(),
+            protocol: "https".into(),
+            extra: [("k".to_string(), "v".to_string())].into_iter().collect(),
+        };
+        // `.into()`：修复前是 `From<T> for T` 的恒等实现（原样把存储结构体放进响应），
+        // 修复后是响应视图。同一条断言因此在改前红、改后绿。
+        let detail = TargetDetail {
+            target: target_row(),
+            meta: payload.into(),
+            items: vec![],
+            insecure_protocol: false,
+            fill_available: true,
+        };
+        let v = serde_json::to_value(&detail).expect("TargetDetail 必须可序列化");
+        let meta = v.get("meta").and_then(|m| m.as_object()).expect("meta 必须是对象");
+        let mut keys: Vec<&str> = meta.keys().map(|k| k.as_str()).collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec![
+                "allowedOrigin",
+                "databaseName",
+                "extra",
+                "host",
+                "port",
+                "protocol",
+                "tenant",
+                "url",
+                "vendor"
+            ],
+            "meta 层的键名必须与前端 TargetMeta 声明一致"
+        );
+        // 逐个值可达：光有键名不够，前端读的是值本身（空串是合法值，undefined 才是事故）
+        assert_eq!(meta["allowedOrigin"].as_str(), Some("https://oa.example.cn"));
+        assert_eq!(meta["databaseName"].as_str(), Some("impcc"));
+        assert_eq!(meta["url"].as_str(), Some("https://oa.example.cn/login"));
+        assert_eq!(meta["extra"]["k"].as_str(), Some("v"));
+    }
+
+    /// 清单由被检对象推导：存储结构体将来加字段而响应视图漏跟，这条必须红。
+    /// 反过来（视图多出台阶字段）也红。
+    #[test]
+    fn meta_response_covers_every_stored_field_exactly_once() {
+        let stored = serde_json::to_value(repo::TargetSecretPayload::default()).unwrap();
+        let response = serde_json::to_value(TargetMetaView::from(repo::TargetSecretPayload::default())).unwrap();
+        let norm = |v: &serde_json::Value| -> Vec<String> {
+            v.as_object()
+                .unwrap()
+                .keys()
+                .map(|k| k.replace('_', "").to_lowercase())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        };
+        assert_eq!(norm(&stored), norm(&response), "响应视图与存储结构体的字段集合必须同源");
     }
 }

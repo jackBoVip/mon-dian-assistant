@@ -207,11 +207,9 @@ pub fn target_meta(vk: &VaultKey, db: &Db, target_id: &str) -> Result<TargetSecr
 
 pub fn list_targets(db: &Db) -> Result<Vec<TargetRow>> {
     let conn = db.lock_conn();
-    let mut stmt = conn.prepare(
-        "SELECT t.id, t.target_type, t.display_name, t.group_id, t.status, t.created_at, t.updated_at,
-                (SELECT count(*) FROM vault_items i WHERE i.target_id=t.id AND i.deleted_at IS NULL AND i.status='active')
-         FROM vault_targets t WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {TARGET_ROW_COLS} FROM vault_targets t WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC, t.id DESC"
+    ))?;
     let rows = stmt
         .query_map([], target_row_from)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -244,6 +242,11 @@ fn like_needle(raw: &str) -> String {
 }
 
 /// 筛选条件只写这一次：分页查询与总数统计共用，避免"页内容按一套条件、共 N 条按另一套条件"。
+/// 主体行的列清单。`list_targets` / `query_targets` / `get_target_row` 三处共用一份，
+/// 免得「计数口径」在某个入口悄悄漂走（`credential_count` 只算未删且启用的凭据）。
+const TARGET_ROW_COLS: &str = "t.id, t.target_type, t.display_name, t.group_id, t.status, t.created_at, t.updated_at,
+                (SELECT count(*) FROM vault_items i WHERE i.target_id=t.id AND i.deleted_at IS NULL AND i.status='active')";
+
 const TARGET_FILTER_FROM_WHERE: &str = "FROM vault_targets t \
      WHERE t.deleted_at IS NULL \
      AND (?1 IS NULL OR t.target_type = ?1) \
@@ -288,9 +291,8 @@ pub fn query_targets(db: &Db, q: &TargetQuery) -> Result<(Vec<TargetRow>, i64)> 
         |r| r.get(0),
     )?;
     let mut stmt = conn.prepare(&format!(
-        "SELECT t.id, t.target_type, t.display_name, t.group_id, t.status, t.created_at, t.updated_at,
-                (SELECT count(*) FROM vault_items i WHERE i.target_id=t.id AND i.deleted_at IS NULL AND i.status='active')
-         {TARGET_FILTER_FROM_WHERE} ORDER BY t.updated_at DESC LIMIT ?6 OFFSET ?7"
+        "SELECT {TARGET_ROW_COLS}
+         {TARGET_FILTER_FROM_WHERE} ORDER BY t.updated_at DESC, t.id DESC LIMIT ?6 OFFSET ?7"
     ))?;
     let rows = stmt
         .query_map(
@@ -309,13 +311,25 @@ pub fn find_similar_targets(db: &Db, vk: &VaultKey, address: &str) -> Result<Vec
     }
     let targets = list_targets(db)?;
     let mut out = Vec::new();
+    let mut unreadable = 0usize;
     for t in targets {
-        if let Ok(meta) = target_meta(vk, db, &t.id) {
-            let hay = format!("{} {} {}", meta.url, meta.host, meta.allowed_origin).to_lowercase();
-            if hay.contains(&needle) {
-                out.push(t);
+        // 原先写成 `if let Ok(meta) = ...`：解密失败的主体被静默跳过，用户看到的是
+        // "未发现地址相近的已有系统"，而真实情况是"有 N 个没能比"。提示可以不全，但不能谎报全。
+        match target_meta(vk, db, &t.id) {
+            Ok(meta) => {
+                let hay = format!("{} {} {}", meta.url, meta.host, meta.allowed_origin).to_lowercase();
+                if hay.contains(&needle) {
+                    out.push(t);
+                }
+            }
+            Err(e) => {
+                unreadable += 1;
+                log::debug!("相似地址检查跳过读不出的主体 {}：{}", t.id, e.code());
             }
         }
+    }
+    if unreadable > 0 {
+        log::warn!("相似地址检查有 {unreadable} 个主体的元数据读不出来，给出的相近系统可能不完整");
     }
     Ok(out)
 }
@@ -520,8 +534,26 @@ pub fn list_items_for_target(db: &Db, target_id: &str, user_id: &str) -> Result<
         .collect::<std::result::Result<Vec<_>, _>>()?;
     drop(stmt);
     let mut rows = rows;
-    for row in rows.iter_mut() {
-        row.tags = item_tags(&conn, &row.id)?;
+    // 标签一次批量取回。原先是 for row in rows { item_tags(...) }：N 条凭据就是 N 次预备语句，
+    // 右栏那一屏每次刷新都要付这份钱（排序仍按 tag，与逐条查时一致）。
+    if !rows.is_empty() {
+        let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+        let marks = vec!["?"; ids.len()].join(",");
+        let mut tstmt = conn.prepare(&format!(
+            "SELECT item_id, tag FROM vault_item_tags WHERE item_id IN ({marks}) ORDER BY item_id, tag"
+        ))?;
+        let mut grouped: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        let fetched = tstmt.query_map(rusqlite::params_from_iter(ids.iter()), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for pair in fetched {
+            let (item_id, tag) = pair?;
+            grouped.entry(item_id).or_default().push(tag);
+        }
+        drop(tstmt);
+        for row in rows.iter_mut() {
+            row.tags = grouped.remove(&row.id).unwrap_or_default();
+        }
     }
     Ok(rows)
 }
@@ -565,11 +597,20 @@ pub fn get_item_row(db: &Db, user_id: &str, item_id: &str) -> Result<ItemRow> {
     Ok(row)
 }
 
+/// 取一条主体的行。
+///
+/// 这里以前是 `list_targets(db)?.into_iter().find(...)`：打开一个系统详情要把**全表**
+/// 连同每行的 `credential_count` 关联子查询一起算一遍。改成按 id 的单行查询，列与计数
+/// 口径与列表共用 `TARGET_ROW_COLS` 那一份，不会漂。
 pub fn get_target_row(db: &Db, target_id: &str) -> Result<TargetRow> {
-    list_targets(db)?
-        .into_iter()
-        .find(|t| t.id == target_id)
-        .ok_or(AppError::NotFound)
+    let conn = db.lock_conn();
+    conn.query_row(
+        &format!("SELECT {TARGET_ROW_COLS} FROM vault_targets t WHERE t.id = ?1 AND t.deleted_at IS NULL"),
+        params![target_id],
+        target_row_from,
+    )
+    .optional()?
+    .ok_or(AppError::NotFound)
 }
 
 /// 目标是否处于可操作状态（未删除且启用）。
@@ -1574,6 +1615,129 @@ mod tests {
 
         // display_name 传 None 时名称也不该被清空
         assert_eq!(get_target_row(&db, &t).unwrap().display_name, "只改名字");
+    }
+
+    /// `get_target_row` 从"取全表再 find"改成"按 id 取一行"之后，行的语义必须与原列表完全一致：
+    /// 计数口径（只算未删且启用的凭据）、软删不可见、未知 id 报 NotFound。
+    /// 以前这三条是同一段 SQL 天然保证的，现在是两份写法，不钉住就会悄悄分叉。
+    #[test]
+    fn single_row_target_read_keeps_the_list_semantics() {
+        let (db, vk) = setup();
+        let keep = web_target(&db, &vk, "台账系统", "https://a.nmgdl.cn");
+        let gone = web_target(&db, &vk, "将被删的", "https://b.nmgdl.cn");
+        add_item(&db, &vk, &keep, "ops1", "u1", "P@ss1only");
+        let disabled = add_item(&db, &vk, &keep, "ops2", "u2", "P@ss2only");
+        db.lock_conn()
+            .execute("UPDATE vault_items SET status='disabled' WHERE id=?1", params![disabled])
+            .unwrap();
+
+        let row = get_target_row(&db, &keep).unwrap();
+        assert_eq!(row.display_name, "台账系统");
+        assert_eq!(row.credential_count, 1, "停用的凭据不计入，与列表那句关联子查询同口径");
+        assert_eq!(row.credential_count, list_targets(&db).unwrap().iter().find(|t| t.id == keep).unwrap().credential_count, "两条 SQL 必须给出同一个数");
+
+        assert!(matches!(get_target_row(&db, "没有这个 id"), Err(AppError::NotFound)));
+        db.lock_conn()
+            .execute("UPDATE vault_targets SET deleted_at=?1 WHERE id=?2", params![now(), gone])
+            .unwrap();
+        assert!(matches!(get_target_row(&db, &gone), Err(AppError::NotFound)), "软删的主体单行也不该读得到");
+    }
+
+    /// 标签从"每条凭据一次查询"改成一次 `IN` 批量取回后，内容、**顺序**与空值形状都不许变。
+    /// 判据直接用被检对象自己：把逐条查那份当基准逐行比。
+    #[test]
+    fn batched_tag_fetch_matches_per_row_query_exactly() {
+        let (db, vk) = setup();
+        let t = web_target(&db, &vk, "打标系统", "https://c.nmgdl.cn");
+        let mk = |alias: &str, tags: Vec<&str>| {
+            create_item(
+                &db,
+                &vk,
+                "u1",
+                &NewItem {
+                    target_id: t.clone(),
+                    account_alias: alias.into(),
+                    tags: tags.into_iter().map(str::to_string).collect(),
+                    favorite: false,
+                    payload: CredentialPayload {
+                        username: alias.into(),
+                        password: SecretString::new("P@ssw0rd-only-for-test"),
+                        ..Default::default()
+                    },
+                    set_as_default: false,
+                },
+            )
+            .unwrap()
+        };
+        let many = mk("甲", vec!["生产", "关键", "备份"]);
+        let one = mk("乙", vec!["测试"]);
+        let none = mk("丙", vec![]);
+
+        let rows = list_items_for_target(&db, &t, "u1").unwrap();
+        assert_eq!(rows.len(), 3);
+        let conn = db.lock_conn();
+        for r in &rows {
+            let per_row = item_tags(&conn, &r.id).unwrap();
+            assert_eq!(r.tags, per_row, "批量结果必须与逐条查逐字相同（含排序）");
+        }
+        drop(conn);
+        let tags_of = |id: &str| rows.iter().find(|r| r.id == id).unwrap().tags.clone();
+        assert_eq!(tags_of(&many).len(), 3);
+        assert_eq!(tags_of(&one).len(), 1);
+        assert!(tags_of(&none).is_empty(), "无标签要给空 vec，不能缺字段");
+    }
+
+    /// 同一个 `updated_at` 上并列时，翻页仍然每行恰好一次（次级键 `t.id DESC` 的作用）。
+    #[test]
+    fn equal_timestamps_still_page_without_duplicates_or_gaps() {
+        let (db, vk) = setup();
+        for i in 0..6 {
+            web_target(&db, &vk, &format!("同刻{i}"), "https://same.nmgdl.cn");
+        }
+        // 全部钉成同一个时间串：并列时的顺序原先完全由 SQLite 随手决定
+        db.lock_conn()
+            .execute("UPDATE vault_targets SET updated_at='2026-11-20T00:00:00+00:00'", [])
+            .unwrap();
+
+        let mut seen: Vec<String> = vec![];
+        for page in 0..6 {
+            let (rows, total) = query_targets(
+                &db,
+                &TargetQuery { limit: Some(1), offset: page, ..Default::default() },
+            )
+            .unwrap();
+            assert_eq!(total, 6);
+            assert_eq!(rows.len(), 1, "每页恰好一条");
+            seen.push(rows[0].id.clone());
+        }
+        let uniq: std::collections::HashSet<&String> = seen.iter().collect();
+        assert_eq!(uniq.len(), 6, "一页一条取六次必须拿到六个不同的 id，否则并列时翻页会漏行或重行");
+
+        // 顺序本身也要确定：同样的查询跑两遍结果逐位相同
+        let a = query_targets(&db, &TargetQuery::default()).unwrap().0;
+        let b = query_targets(&db, &TargetQuery::default()).unwrap().0;
+        assert_eq!(a.iter().map(|t| t.id.clone()).collect::<Vec<_>>(), b.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
+    }
+
+    /// 某个主体的元数据读不出来时，相似地址检查不再把它静默当成"不相近"：
+    /// 能读的照样要比得出来，函数也不该整条报错。
+    #[test]
+    fn similar_targets_answers_even_when_one_meta_is_unreadable() {
+        let (db, vk) = setup();
+        let good = web_target(&db, &vk, "能读的", "https://ok.nmgdl.cn");
+        let bad = web_target(&db, &vk, "密文被改坏的", "https://ok.nmgdl.cn");
+        // 换掉密文：AEAD 认证解密必然失败（AAD 绑了 target_id 与载荷版本）
+        db.lock_conn()
+            .execute(
+                "UPDATE vault_target_secrets SET ciphertext=?1 WHERE target_id=?2",
+                params![vec![0u8; 24], bad],
+            )
+            .unwrap();
+        assert!(target_meta(&vk, &db, &bad).is_err(), "先确认这一条真的读不出来，否则本测试什么都没测到");
+
+        let hits = find_similar_targets(&db, &vk, "https://ok.nmgdl.cn").unwrap();
+        assert!(hits.iter().any(|t| t.id == good), "能读的必须照样报出来，不能被一条坏数据带走");
+        assert!(hits.iter().all(|t| t.id != bad));
     }
 }
 

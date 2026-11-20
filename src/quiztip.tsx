@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QuizTipApp } from './quiztip/QuizTipApp';
 import { useTheme } from './state/theme';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import './styles/tokens.css';
 import './styles/global.css';
 import './styles/quiztip.css';
@@ -14,7 +15,9 @@ if (!container) {
 }
 
 createRoot(container).render(
-  <StrictMode>
-    <QuizTipApp />
-  </StrictMode>,
+  <ErrorBoundary>
+    <StrictMode>
+      <QuizTipApp />
+    </StrictMode>
+  </ErrorBoundary>,
 );

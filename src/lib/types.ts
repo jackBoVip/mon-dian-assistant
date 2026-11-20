@@ -355,7 +355,14 @@ export interface GroupRow {
   targetCount: number
 }
 
-/** db::repo::TargetSecretPayload（target_detail.meta；serde 无 rename，字段本就 camelCase） */
+/**
+ * commands::mod::TargetMetaView（target_detail.meta）。
+ * 键是 camelCase，因为出线上换了一层带 `rename_all = "camelCase"` 的响应视图；
+ * 存储用的 `db::repo::TargetSecretPayload` 本身是 snake_case（它的 JSON 键同时是加密落库格式，
+ * 不能改名），而 serde 外层结构体的 rename_all **不传导到嵌套结构体** —— 以前这里写着
+ * "serde 无 rename，字段本就 camelCase"，那句是错的，测试 mock 照着写错、真机却在渲染期抛错白屏。
+ * 键名契约由 Rust 侧 `target_detail_meta_went_out_with_the_keys_the_frontend_declares` 钉住。
+ */
 export interface TargetMeta {
   url: string
   allowedOrigin: string

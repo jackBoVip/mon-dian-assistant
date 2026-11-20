@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { App } from './App';
 import { createQueryClient } from './lib/queryClient';
 import { useTheme } from './state/theme';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 // 令牌层与工具类层要分别引入：global.css 和组件全靠 var(--…) 取值，漏掉 tokens.css 不会报错，
 // 只会让整套主题静默失效。浮层入口 launcher.tsx 引的是同一对文件。
 import './styles/tokens.css';
@@ -27,9 +28,12 @@ if (!container) {
 }
 
 createRoot(container).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </StrictMode>,
+  // 边界放在最外层：里面任何一处渲染期抛错都只降级那一块，不再整页空白。
+  <ErrorBoundary>
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </StrictMode>
+  </ErrorBoundary>,
 );

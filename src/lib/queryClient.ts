@@ -18,6 +18,8 @@ export const queryKeys = {
   targetsPaged: (filter: unknown, page: number, pageSize: number) =>
     ['targetsPaged', filter, page, pageSize] as const,
   targetDetail: (id: string) => ['targetDetail', id] as const,
+  /** 详情缓存整族的作废前缀（配合 `invalidateTargetDetails`）。 */
+  targetDetailAll: ['targetDetail'] as const,
   targetItems: (id: string) => ['targetItems', id] as const,
   itemDetail: (id: string) => ['itemDetail', id] as const,
   deletedItems: ['deletedItems'] as const,
@@ -87,6 +89,19 @@ export const queryKeys = {
 export function invalidateTargetLists(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: queryKeys.targetsAll });
   void qc.invalidateQueries({ queryKey: queryKeys.targetsPagedAll });
+}
+
+/**
+ * 作废所有已打开过的主体详情缓存。
+ *
+ * 只在"整批改写主体元数据"的场合要调它：导入的那条路会把 Chrome 形状导入留下的空
+ * `allowed_origin` **自愈补上**（`importexport.rs` 复用已有目标时回填），而详情缓存的
+ * `staleTime` 是 15 秒——不作废的话，用户接着打开「编辑系统」拿到的还是补之前的旧 meta，
+ * 一保存就把刚自愈好的 Origin 又写回空值。逐条改目标的那两个弹窗各自作废自己那一 id，
+ * 用不到这里。
+ */
+export function invalidateTargetDetails(qc: QueryClient): void {
+  void qc.invalidateQueries({ queryKey: queryKeys.targetDetailAll });
 }
 
 /** 角色、权限、用户角色或状态变更后统一作废这一族：导航、矩阵、用户徽标、角色下拉都要重取。 */
