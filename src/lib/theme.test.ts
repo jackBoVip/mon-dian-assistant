@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyTheme, THEME_STYLES, type ThemeState } from './theme';
+import { applyTheme, customThemeRulePresent, syncCustomThemeStyles, THEME_STYLES, customThemeTokens, type ThemeState } from './theme';
+import { customThemeStyle } from './types';
+import { THEME_TOKEN_NAMES } from './themeTokens';
 
 const SYS = { reduceMotion: false };
 
@@ -91,5 +93,37 @@ describe('applyTheme 的 reduceMotion 取两路或值', () => {
     });
     applyTheme(root, state({ reduceMotion: fromState }), { reduceMotion: fromSystem });
     expect(root.dataset.reduceMotion).toBe(expected);
+  });
+});
+
+/**
+ * `themeTokens.customThemeId` 是构造器、`types.customThemeId` 是提取器，两枚同名而语义相反。
+ * 2026-11-20 立主题守卫时发现 lib/theme.ts 从前者引了它，于是 customThemeTokens 一直在拿
+ * `t.id` 和 'custom-custom-x' 比——永远不等，预览色块静默读不到自己那套令牌。
+ * 这两条守的就是"引对那一枚"，换 import 时忘了会直接红。
+ */
+describe('自定义主题 id 的两枚同名函数不许用混', () => {
+  const full = (over: Record<string, string> = {}) => ({
+    ...Object.fromEntries(THEME_TOKEN_NAMES.map((n) => [n, '#101010'])),
+    '--blur': 'blur(12px)',
+    ...over,
+  });
+
+  it('customThemeTokens 取得到那一档自己的令牌（内置档返回 null）', () => {
+    const themes = [{ id: 'brand', name: '本单位', tokens: JSON.stringify(full({ '--t-primary': '#ff0000' })) }];
+    expect(customThemeTokens(themes as never, customThemeStyle('brand'))).toMatchObject({ '--t-primary': '#ff0000' });
+    expect(customThemeTokens(themes as never, 'glass')).toBeNull();
+    expect(customThemeTokens(themes as never, customThemeStyle('nope'))).toBeNull();
+  });
+
+  it('customThemeRulePresent：注入成功才算在，缺规则/内置档各自的答', () => {
+    document.head.querySelectorAll('style').forEach((el) => el.remove());
+    const style = customThemeStyle('brand');
+    expect(customThemeRulePresent(document, style)).toBe(false);
+    syncCustomThemeStyles(document, [{ id: 'brand', name: '本单位', tokens: JSON.stringify(full()) }] as never);
+    expect(customThemeRulePresent(document, style)).toBe(true);
+    // 内置档不需要运行时规则，"在不在"这个问题对它无意义
+    expect(customThemeRulePresent(document, 'obsidian')).toBe(true);
+    document.head.querySelectorAll('style').forEach((el) => el.remove());
   });
 });

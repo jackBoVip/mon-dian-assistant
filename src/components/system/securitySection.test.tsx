@@ -328,3 +328,49 @@ describe('读取失败', () => {
     expect(screen.queryByRole('switch', { name: '允许复制密码' })).toBeNull();
   });
 });
+
+/**
+ * 渲染面自检行（2026-11-20）。
+ *
+ * 交付方能读到的只有版本号，读不到日志；而 Win10"配色糊"的判据（引擎支不支持 color-mix、
+ * 当前主题的规则在不在 DOM 里）只有引擎自己知道。这一行的价值全在"报障时能直接念"，
+ * 所以两种引擎各测一遍：不支持时必须把话说到"升到 Chromium 111 及以上"那一步，
+ * 而不是只标个不支持就完事。
+ */
+describe('系统信息里的渲染自检', () => {
+  function spySupports(colorMix: boolean) {
+    vi.spyOn(CSS, 'supports').mockImplementation((prop: string) => (prop === 'color' ? colorMix : true));
+  }
+
+  it('color-mix 不支持：显式说不支持，并给出可执行的下一步', async () => {
+    spySupports(false);
+    renderSection();
+    expect(await screen.findByText(/^渲染引擎：/)).toBeInTheDocument();
+    expect(screen.getByText('不支持')).toBeInTheDocument();
+    expect(screen.getByText(/Chromium 111 及以上/)).toBeInTheDocument();
+  });
+
+  it('color-mix 支持：不许出现那句升级提示（不能把正常机器吓成故障机）', async () => {
+    spySupports(true);
+    renderSection();
+    expect(await screen.findByText(/^渲染引擎：/)).toBeInTheDocument();
+    expect(screen.getAllByText('支持').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/Chromium 111 及以上/)).toBeNull();
+  });
+
+  it('引擎版本读不出来时如实说"未识别"，不编一个号', async () => {
+    spySupports(true);
+    const ua = Object.getOwnPropertyDescriptor(window.navigator, 'userAgent');
+    Object.defineProperty(window.navigator, 'userAgent', { value: 'SomeOtherAgent/1.0', configurable: true });
+    try {
+      renderSection();
+      expect(await screen.findByText(/渲染引擎：未识别/)).toBeInTheDocument();
+    } finally {
+      if (ua?.value !== undefined) {
+        Object.defineProperty(window.navigator, 'userAgent', { ...ua, configurable: true });
+      } else {
+        delete (window.navigator as unknown as { userAgent?: string }).userAgent;
+      }
+    }
+  });
+});

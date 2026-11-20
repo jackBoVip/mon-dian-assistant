@@ -53,16 +53,66 @@ fn task_nav_payload(task_key: &str, env: &str) -> serde_json::Value {
     serde_json::json!({ "page": "tasks", "taskKey": task_key, "env": env })
 }
 
+/// 浮层执行完一条动作之后的收尾。判据只看回执本身，不另建一张"动作元数据表"——
+/// 规则一共就三条，建成表反而是多余的间接层。
+enum FollowUp {
+    /// 要在浮层里接着选（无默认账号时给出的候选列表）：留着浮层，回执也留在原地。
+    Keep,
+    /// 已经把用户带到别处（浏览器 / 终端 / 数据库工具 / 主窗导航）：只收浮层。
+    /// 浮层是置顶窗，不收起它就压在刚打开的应用上面——这正是交付方报的那件事。
+    Hide,
+    /// 用户哪儿也没去（复制用户名/密码、设为默认），或这次**没成功**（降级、拒绝）：
+    /// 收浮层并把主窗带到前台。不raise主窗的话，回执就只剩一个已经消失的浮层可说，
+    /// 等于"点了没反应还什么都看不见"（交付方 2026-10-20 报过的同一类症状）。
+    HideAndRaiseMain,
+}
+
+fn follow_up(reply: &ActionReply) -> FollowUp {
+    if reply.candidates.is_some() {
+        return FollowUp::Keep;
+    }
+    // 失败与降级优先于"用户去了哪儿"：这类回执必须被看到，不然现场只能靠猜
+    if !reply.ok {
+        return FollowUp::HideAndRaiseMain;
+    }
+    match reply.action.as_str() {
+        "copy_username" | "copy_password" | "set_default" => FollowUp::HideAndRaiseMain,
+        _ => FollowUp::Hide,
+    }
+}
+
+/// 浮层收起后，把那条回执转给主窗的 toast 通道。
+///
+/// 只在 `HideAndRaiseMain` 这一支发：那类动作没有把用户带离本应用，提示必须被看见。
+/// `Hide` 那一支不发——用户已经在浏览器里了，主窗背后多一条 toast 只是噪音。
+pub const ACTION_NOTE_EVENT: &str = "launcher://action-note";
+
+fn emit_action_note(app: &AppHandle, reply: &ActionReply) {
+    if reply.message.is_empty() {
+        return;
+    }
+    let _ = app.emit(
+        ACTION_NOTE_EVENT,
+        serde_json::json!({ "ok": reply.ok, "action": reply.action, "message": reply.message }),
+    );
+}
+
+/// 把主窗带回前台（可能被最小化过）。收起浮层与它是两件事，分开写才好复用。
+fn focus_main(app: &AppHandle) -> Result<()> {
+    let main = app.get_webview_window("main").ok_or(AppError::NotFound)?;
+    let _ = main.unminimize();
+    main.show().map_err(|e| AppError::internal("主窗口显示", &e))?;
+    let _ = main.set_focus();
+    Ok(())
+}
+
 /// 把浮层点中的那一条交到主窗手上：收起浮层 → 主窗回到前台 → 发导航事件。
 ///
 /// 浮层是置顶窗，不收起它就会压在应用上面；主窗可能被最小化，所以 unminimize 也要来一下。
 fn reveal_in_main(app: &AppHandle, payload: serde_json::Value) -> Result<()> {
     crate::launcher::show_or_hide(app, false)?;
-    let main = app.get_webview_window("main").ok_or(AppError::NotFound)?;
-    let _ = main.unminimize();
-    main.show().map_err(|e| AppError::internal("主窗口显示", &e))?;
-    let _ = main.set_focus();
-    let _ = main.emit(OPEN_DETAIL_EVENT, payload);
+    focus_main(app)?;
+    let _ = app.emit(OPEN_DETAIL_EVENT, payload);
     Ok(())
 }
 
@@ -195,7 +245,7 @@ pub fn quick_action(app: AppHandle, action: QuickAction, item_id: String, target
     // 所以"刚改完别名立刻搜不到"这种事不会发生。
     core.ensure_index_fresh()?;
     rbac::require(&core.db, &user, perm::MENU_QUICK_LAUNCHER)?;
-    match action {
+    let reply = match action {
         QuickAction::OpenTarget => open_target( target_id),
         QuickAction::OpenAndFill => open_and_fill( target_id, credential_id),
         QuickAction::CopyUsername => copy_item(item_id, QuickAction::CopyUsername),
@@ -227,7 +277,22 @@ pub fn quick_action(app: AppHandle, action: QuickAction, item_id: String, target
             core.rebuild_index()?;
             Ok(ActionReply::ok("set_default", "已设为该目标下你的默认账号"))
         }
+    }?;
+
+    // 收尾：浮层收不收、主窗要不要带上来，全由回执本身决定（判据见 follow_up）。
+    // 这一步就是交付方报的那件事——"浏览器打开了，可浮层还压在它上面"。
+    match follow_up(&reply) {
+        FollowUp::Keep => {}
+        FollowUp::Hide => {
+            crate::launcher::show_or_hide(&app, false)?;
+        }
+        FollowUp::HideAndRaiseMain => {
+            crate::launcher::show_or_hide(&app, false)?;
+            focus_main(&app)?;
+            emit_action_note(&app, &reply);
+        }
     }
+    Ok(reply)
 }
 
 fn copy_item(item_id: String, action: QuickAction) -> Result<ActionReply> {
@@ -617,5 +682,48 @@ mod tests {
         assert_eq!(t["page"], "tasks");
         assert_eq!(t["taskKey"], "release");
         assert_eq!(t["env"], "prod");
+    }
+
+    /// 收尾判据（交付方 2026-11-20：点了能力之后浮层必须自己收起来）。
+    /// 这三条规则是整个改动里唯一有"取舍"的地方，所以逐支钉死，不靠人工回归去记。
+    #[test]
+    fn follow_up_closes_the_overlay_except_when_user_must_pick_next() {
+        // ① 候选态：用户要在浮层里接着选，留着
+        let mut picking = ActionReply::ok("select_other_account", "请选择要使用的账号");
+        picking.candidates = Some(vec![]);
+        assert!(matches!(follow_up(&picking), FollowUp::Keep));
+
+        // ② 成功且把人带走了（网站/终端/数据库工具）：只收浮层，不抢主窗
+        let opened = ActionReply {
+            opened: Some("https://oa.example.cn".into()),
+            ..ActionReply::ok("open_and_fill", "浏览器打开网站，等待浏览器扩展凭票据填充")
+        };
+        assert!(matches!(follow_up(&opened), FollowUp::Hide));
+        let opened_target = ActionReply {
+            opened: Some("https://oa.example.cn".into()),
+            ..ActionReply::ok("open_target", "浏览器已打开")
+        };
+        assert!(matches!(follow_up(&opened_target), FollowUp::Hide));
+    }
+
+    /// 哪儿也没去的动作，以及**失败/降级**：收浮层的同时必须把主窗带上来，
+    /// 否则提示只剩一个已经消失的浮层可说——那又回到"点了没反应"。
+    #[test]
+    fn follow_up_raises_main_when_the_reply_would_otherwise_be_invisible() {
+        for action in ["copy_username", "copy_password", "set_default"] {
+            let r = ActionReply::ok(action, "已完成");
+            assert!(matches!(follow_up(&r), FollowUp::HideAndRaiseMain), "{action} 该把主窗带上来");
+        }
+        // 扩展未就绪：ok=false 但浏览器其实已经打开——这一支必须仍看得见那句话
+        let mut degraded = ActionReply {
+            opened: Some("https://oa.example.cn".into()),
+            ..ActionReply::fail("open_and_fill", &AppError::ExtensionUnavailable)
+        };
+        degraded.message = "浏览器扩展未就绪：请手动输入，或使用「复制用户名」「复制密码」两个单独动作。".into();
+        assert!(matches!(follow_up(&degraded), FollowUp::HideAndRaiseMain));
+        // 而无默认账号那一条是候选态（ok=false 但 candidates 有值）：留在浮层里选
+        let mut no_default = ActionReply::fail("open_and_fill", &AppError::NoDefaultCredential);
+        no_default.candidates = Some(vec![]);
+        assert!(matches!(follow_up(&no_default), FollowUp::Keep));
     }
 }

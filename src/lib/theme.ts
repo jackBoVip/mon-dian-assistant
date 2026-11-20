@@ -1,5 +1,10 @@
 import type { BuiltinThemeStyle, CustomTheme, ThemeStyle } from './types';
-import { buildThemeRule, customThemeId } from './themeTokens';
+import { buildThemeRule } from './themeTokens';
+// 注意同名坑：`themeTokens.customThemeId(raw)` 是**构造器**（'full' → 'custom-full'，拼进选择器用），
+// `types.customThemeId(style)` 才是**提取器**（'custom-full' → 'full'，非自定义档返回 null）。
+// 这一枚过去从 themeTokens 引，结果两处都把构造器当提取器用：`customThemeTokens` 拿 t.id 去比
+// 'custom-custom-x' 永远不等，预览色块一直静默拿不到自己的令牌（2026-11-20 立主题守卫时才撞出来）。
+import { customThemeId } from './types';
 
 /** 内置四套：与 Rust settings::THEME_STYLES 完全一致的字面量（顺序也要一致，选择器按它渲染）。
  *  自定义档不在这里——它们由用户在「界面外观」里新增，id 与令牌都存在库里。 */
@@ -41,6 +46,21 @@ export function syncCustomThemeStyles(doc: Document, themes: CustomTheme[]): voi
     })
     .filter(Boolean)
     .join('\n');
+}
+
+/**
+ * 某一档自定义主题的运行时规则**是否真的在 DOM 里**。
+ *
+ * 存在是硬条件，不是洁癖：`data-theme="custom-x"` 挂着而那一档的 CSS 块不在，整套令牌
+ * 就取不到值——`background` 落 initial（透明）、`color` 落 inherit。这正是"字和背景糊在一起
+ * 看不清"的形状。`buildThemeRule` 在令牌不齐时故意返回空串（宁可不注入），所以"库里有这一档"
+ * 并不等于"界面上有这套颜色"，两件事必须分开问。内置档不需要运行时规则，直接算在。
+ */
+export function customThemeRulePresent(doc: Document, style: ThemeStyle): boolean {
+  const id = customThemeId(style);
+  if (!id) return true;
+  const tag = doc.getElementById(CUSTOM_STYLE_TAG);
+  return !!tag?.textContent?.includes(`[data-theme="custom-${id}"]`);
 }
 
 /** 从注入用的那条规则里读回某一档自定义主题的令牌（预览色块要用它自己的颜色）。 */

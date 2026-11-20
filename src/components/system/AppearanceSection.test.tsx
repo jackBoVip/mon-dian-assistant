@@ -32,7 +32,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
 });
 
 /** 一整套合法令牌：从 tokens.css 现取，测试不另抄一份色值。 */
-function fullPaste(overrides: Record<string, string> = {}): string {
+function fullTokens(overrides: Record<string, string> = {}): Record<string, string> {
   const css = readFileSync(join(resolve(process.cwd()), 'src/styles/tokens.css'), 'utf8');
   const block = css.match(/\[data-theme="glass"\]\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
   const out: Record<string, string> = {};
@@ -40,10 +40,20 @@ function fullPaste(overrides: Record<string, string> = {}): string {
     const g = /^\s*(--[\w-]+):\s*(.+?);\s*$/.exec(line);
     if (g) out[g[1]] = g[2];
   }
-  return Object.entries({ ...out, ...overrides }).map(([k, v]) => `${k}: ${v};`).join('\n');
+  return { ...out, ...overrides };
 }
 
-const SEA: CustomTheme = { id: 'sea', name: '海盐蓝', tokens: JSON.stringify({ '--t-primary': '#0e6ba8', '--t-bg': '#eef4f8' }) };
+function fullPaste(overrides: Record<string, string> = {}): string {
+  return Object.entries(fullTokens(overrides)).map(([k, v]) => `${k}: ${v};`).join('\n');
+}
+
+// 库里存不进"半套"主题（解析与 Rust 归一都要求整套），所以这一档也必须给整套：
+// 只有半套时注入侧宁可不写，那一档就没有对应 CSS 块——界面上的回退行为测的就不是这条路径了。
+const SEA: CustomTheme = {
+  id: 'sea',
+  name: '海盐蓝',
+  tokens: JSON.stringify(fullTokens({ '--t-primary': '#0e6ba8', '--t-bg': '#eef4f8' })),
+};
 
 beforeEach(() => {
   vi.clearAllMocks();

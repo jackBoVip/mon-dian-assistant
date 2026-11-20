@@ -9,6 +9,7 @@ import { queryKeys } from '../lib/queryClient';
 import { useSession } from '../state/session';
 import { useTheme } from '../state/theme';
 import { useLauncherNav } from '../state/launcherNav';
+import { useNotify } from '../state/notify';
 import { seedMenuNodes } from '../test/menuFixtures';
 import type { MenuNode } from '../lib/types';
 
@@ -16,7 +17,8 @@ const mocks = vi.hoisted(() => ({
   myPermissions: vi.fn(),
   listMenuNodes: vi.fn(),
   launcherVisibility: vi.fn(),
-  events: { name: '', handler: null as null | ((payload: unknown) => void) },
+  /** 壳层订阅的事件：按名字登记。只记一枚的话，第二枚订阅会把它盖掉——2026-11-20 加 action-note 时踩过。 */
+  events: {} as Record<string, (payload: unknown) => void>,
 }));
 
 vi.mock('../lib/api', async (importOriginal) => {
@@ -37,8 +39,7 @@ vi.mock('../lib/vaultEvents', async (importOriginal) => {
   return {
     ...mod,
     useBackendEventPayload: (name: string, handler: (payload: unknown) => void) => {
-      mocks.events.name = name;
-      mocks.events.handler = handler;
+      mocks.events[name] = handler;
     },
   };
 });
@@ -102,8 +103,7 @@ beforeEach(() => {
   Object.values(mocks).forEach((fn) => {
     if (typeof fn === 'function' && 'mockReset' in fn) fn.mockReset();
   });
-  mocks.events.name = '';
-  mocks.events.handler = null;
+  mocks.events = {};
   mocks.myPermissions.mockResolvedValue(FULL);
   mocks.listMenuNodes.mockResolvedValue(seedMenuNodes());
   mocks.launcherVisibility.mockResolvedValue(undefined);
@@ -199,7 +199,7 @@ describe('壳层：系统管理的左栏与落点', () => {
     expect(screen.queryByRole('button', { name: '任务中心' })).toBeNull();
 
     act(() => {
-      mocks.events.handler?.({ page: 'tasks', taskKey: 'release', env: 'prod' });
+      mocks.events['launcher://open-detail']({ page: 'tasks', taskKey: 'release', env: 'prod' });
     });
     expect(await screen.findByText('RELEASE_PAGE')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '任务中心导航' })).toBeInTheDocument();
@@ -304,10 +304,10 @@ describe('壳层：浮层跳到主窗的那条事件', () => {
     renderShell();
     await pickGearItem('系统管理');
     await screen.findByText('ADMIN_PAGE:users');
-    expect(mocks.events.name).toBe('launcher://open-detail');
+    expect(Object.keys(mocks.events)).toContain('launcher://open-detail');
 
     act(() => {
-      mocks.events.handler?.({ page: 'accounts', targetId: 't1', itemId: 'i1', keyword: '生产库' });
+      mocks.events['launcher://open-detail']({ page: 'accounts', targetId: 't1', itemId: 'i1', keyword: '生产库' });
     });
 
     expect(await screen.findByText('ACCOUNTS_PAGE')).toBeInTheDocument();
@@ -338,10 +338,56 @@ describe('壳层：浮层跳到主窗的那条事件', () => {
     await screen.findByText('ACCOUNTS_PAGE');
 
     act(() => {
-      mocks.events.handler?.(payload);
+      mocks.events['launcher://open-detail'](payload);
     });
 
     expect(await screen.findByText(marker)).toBeInTheDocument();
     await waitFor(() => expect(useLauncherNav.getState().pending).toEqual(payload));
+  });
+});
+
+/**
+ * 浮层动作执行完就收窗了（阶段 1），那句回执只剩主窗这一条通道可说。
+ * 这里守的是"收到了就一定说出来，且不改述后端的口径"。
+ */
+describe('壳层：浮层动作回执的转呈', () => {
+  it('action-note 是壳层订阅的第二枚事件，两枚都在', async () => {
+    renderShell();
+    const names = Object.keys(mocks.events);
+    expect(names).toContain('launcher://open-detail');
+    expect(names).toContain('launcher://action-note');
+  });
+
+  it('成功回执进 toast：浮层已经收走了，这句话只剩这里能说', async () => {
+    const before = useNotify.getState().items.length;
+    renderShell();
+    act(() => {
+      mocks.events['launcher://action-note']({ ok: true, action: 'copy_password', message: '密码已复制，剪贴板将在 30 秒后清除' });
+    });
+    expect(await screen.findByText('密码已复制，剪贴板将在 30 秒后清除')).toBeInTheDocument();
+    expect(useNotify.getState().items.length).toBe(before + 1);
+  });
+
+  it('失败/降级回执原样转呈，前端不改述后端口径', async () => {
+    renderShell();
+    act(() => {
+      mocks.events['launcher://action-note']({
+        ok: false,
+        action: 'open_and_fill',
+        message: '浏览器扩展未就绪：已打开网站，请手动输入，或使用两个单独复制动作',
+      });
+    });
+    const items = useNotify.getState().items;
+    expect(items[items.length - 1].text).toContain('扩展未就绪');
+    expect(items[items.length - 1].kind).toBe('warning');
+  });
+
+  it('空消息不生出空白 toast（后端没话说时不该有条目）', async () => {
+    const before = useNotify.getState().items.length;
+    renderShell();
+    act(() => {
+      mocks.events['launcher://action-note']({ ok: true, action: 'noop', message: '' });
+    });
+    expect(useNotify.getState().items.length).toBe(before);
   });
 });

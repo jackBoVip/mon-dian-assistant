@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { queryKeys } from '../../lib/queryClient';
 import { keystoreDiagnosticsOptions } from '../../lib/queryOptions';
-import type { LauncherShortcutStatus, SecurityStatus } from '../../lib/types';
+import type { LauncherShortcutStatus, SecurityStatus, ThemeStyle } from '../../lib/types';
+import { customThemeRulePresent } from '../../lib/theme';
 import { Badge } from '../ui/Badge';
 import { Input } from '../ui/field-primitives';
 import { Select } from '../ui/select';
@@ -19,6 +20,57 @@ import {
   type SettingGroupId,
   type SettingSpec,
 } from '../../lib/securitySettings';
+
+/**
+ * 渲染面自检（2026-11-20 立）。
+ *
+ * 起因是 Win10 的报障「主题颜色和 Win11 不一致，字和背景糊在一起」。现场能读到版本号，
+ * 但读不到应用日志，而这件事的判据恰恰只有渲染引擎自己知道：
+ * ① 它支持不支持 `color-mix()`——不支持时手写在 tokens.css / global.css 里的那几十处声明
+ *    在 computed-value 期直接非法，底色落 **transparent**、文字落 inherit，谁都不报错；
+ * ② 当前这一档主题的运行时规则到底在不在 DOM 里（自定义档靠 `syncCustomThemeStyles` 注入，
+ *    没注入成功却还挂着 `data-theme="custom-x"`，就是同一台机器两扇窗颜色不同的形状）。
+ * 把这两个数摆到界面上，报障的人念一遍就够，不需要 devtools、也不需要日志。
+ *
+ * 这一行只报"引擎自己的看法"，不代表界面一定有错：两个都 true 而现象还在，就得往别处查。
+ */
+function RenderProbe() {
+  const supports = (prop: string, value: string): boolean =>
+    typeof CSS !== 'undefined' && typeof CSS.supports === 'function' ? CSS.supports(prop, value) : false;
+  const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+  const engine = /(?:Edg|Chrome)\/(\d+)/i.exec(ua);
+  const theme = typeof document === 'undefined' ? '' : (document.documentElement.dataset.theme ?? '');
+  const colorMix = supports('color', 'color-mix(in srgb, red, blue)');
+  const backdrop = supports('backdrop-filter', 'blur(4px)');
+  const rulePresent = typeof document === 'undefined' ? false : customThemeRulePresent(document, theme as ThemeStyle);
+
+  return (
+    <div className="mt-3 border-t border-line pt-3" aria-live="polite">
+      <div className="mono flex flex-wrap gap-x-6 gap-y-1 text-xs">
+        <span>渲染引擎：{engine ? `Chromium ${engine[1]}` : ua ? '未识别' : '非浏览器环境'}</span>
+        <span>
+          color-mix：<Badge tone={colorMix ? 'success' : 'warning'}>{colorMix ? '支持' : '不支持'}</Badge>
+        </span>
+        <span>
+          backdrop-filter：<Badge tone={backdrop ? 'success' : 'muted'}>{backdrop ? '支持' : '不支持'}</Badge>
+        </span>
+        <span>当前主题档：{theme || '未设置'}</span>
+        <span>该档样式已就位：{rulePresent ? '是' : '否'}</span>
+      </div>
+      {!colorMix ? (
+        <p className="mt-1 text-xs text-warning">
+          这台机器的渲染引擎不支持 color-mix()：依赖它的颜色会取不到值（底色变透明、文字继承），
+          请先让本机 WebView2 运行时升到 Chromium 111 及以上，再看这一行是否转成「支持」。
+        </p>
+      ) : null}
+      {!rulePresent ? (
+        <p className="mt-1 text-xs text-warning">
+          当前 {theme || '（未设置）'} 这一档在本窗口里没有对应的样式规则，颜色会落空——已按默认外观显示。
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 function BoolBadge({ value, ok, ng }: { value: boolean; ok: string; ng: string }) {
   return <Badge tone={value ? 'success' : 'muted'}>{value ? ok : ng}</Badge>;
@@ -89,6 +141,7 @@ export function SecuritySection() {
               </span>
               <span>遥测：{sysinfo.data.telemetry}</span>
             </div>
+            <RenderProbe />
           </div>
         ) : null}
       </section>

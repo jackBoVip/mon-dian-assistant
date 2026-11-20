@@ -13,6 +13,7 @@ import { NotifyHost } from './ui/sonner';
 import { Loading, ErrorState, EmptyState } from './ui/StateBlocks';
 import { useBackendEventPayload } from '../lib/vaultEvents';
 import { useLauncherNav, type LauncherNavPayload } from '../state/launcherNav';
+import { notify } from '../state/notify';
 import { firstReachablePage, resolveTasksLanding, useNavTree } from '../lib/menuTree';
 import { isAdminPage, isSettingsPage, isTaskPage, type AdminPageKey, type PageKey } from '../lib/pageMeta';
 
@@ -67,6 +68,17 @@ export function AppShell() {
       setPage(payload.page);
     }
     useLauncherNav.getState().open(payload);
+  });
+
+  /**
+   * 浮层执行完动作后自己收起了（判据在 Rust 的 `follow_up`）。凡是"用户哪儿也没去"的动作
+   * （复制、设为默认）和所有失败/降级回执，Rust 会同时把主窗带到前台并把这句话转过来——
+   * 少了这一环，提示就只剩一个已经消失的浮层可说，等于"点了没反应还什么都看不见"。
+   * 事件名两侧同源，判据在 src/lib/ipcContract.test.ts。
+   */
+  useBackendEventPayload<{ ok: boolean; action: string; message: string }>('launcher://action-note', (payload) => {
+    if (!payload.message) return;
+    notify(payload.ok ? 'success' : 'warning', payload.message);
   });
 
   function content() {

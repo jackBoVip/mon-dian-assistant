@@ -146,10 +146,13 @@ describe('浮层 → 主窗的导航事件两侧同源', () => {
   it('ViewDetail 分支必须做三件事：收起浮层、把主窗带到前台、发导航事件', () => {
     const branch = /QuickAction::ViewDetail => \{([\s\S]*?)\n        \}/.exec(rust);
     expect(branch, '找不到 ViewDetail 分支（写法变了就要重写这条正则）').not.toBeNull();
-    // 三件事收在 reveal_in_main 那一枚 helper 里（分支只负责判权限 + 调它 + 回一句真话）。
+    // 三件事收在 reveal_in_main + focus_main 两枚 helper 里（分支只负责判权限 + 调它 + 回一句真话）。
+    // focus_main 是 2026-11-20 抽出来的：动作收尾也要把主窗带上来，同一段代码不该写两遍。
     const helper = /fn reveal_in_main[\s\S]*?\n\}/.exec(rust);
+    const focus = /fn focus_main[\s\S]*?\n\}/.exec(rust);
     expect(helper, '导航动作没有被收进一个可核对的地方（既不在分支里，也没有 reveal_in_main）').not.toBeNull();
-    const script = `${branch![1]}\n${helper![0]}`;
+    expect(focus, 'reveal_in_main 里的"把主窗带到前台"被内联回去了：收尾那条路径就再也复用它不了').not.toBeNull();
+    const script = `${branch![1]}\n${helper![0]}\n${focus![0]}`;
     // 反向断言只看代码行：注释里可以引用那句被作废的话（本轮的注释就在解释它为什么被撤）。
     const code = branch![1]
       .split('\n')
@@ -159,6 +162,29 @@ describe('浮层 → 主窗的导航事件两侧同源', () => {
     expect(script, '主窗没被带到前台').toMatch(/\.show\(\)/);
     expect(script, '没有发出导航事件').toMatch(/emit\(/);
     expect(code, '还在回那句"详情已加载"——它承诺的比代码做到的多').not.toContain('详情已加载');
+  });
+
+  /**
+   * 交付方 2026-11-20：「选中某条目、点了它的能力（打开浏览器、复制等）之后，自动关闭启动器页面」。
+   * 判据收在 Rust 的 `follow_up` 一支纯函数里（三档取舍由 `commands/launcher.rs` 的 Rust 单测钉住），
+   * 这里守的是**它真的被接在 quick_action 末尾**——纯函数测得再绿，没接上就等于没做。
+   */
+  it('quick_action 末尾必须按回执收尾：收浮层，必要时带主窗并把回执转呈', () => {
+    const fn = /pub fn quick_action[\s\S]*?\n\}\n\n/.exec(rust);
+    expect(fn, 'quick_action 的写法变了（结尾不再以空行分隔），本条守卫要重写').not.toBeNull();
+    const body = fn![0];
+    expect(body, '回执算出来了却没按它收尾：浮层仍会压在刚打开的应用上面').toMatch(/match follow_up\(&reply\)/);
+    expect(body).toMatch(/FollowUp::Hide => \{\s*crate::launcher::show_or_hide\(&app, false\)\?;/);
+    expect(body, '哪儿也没去的动作收了浮层却没把主窗带上来，提示会掉进虚空').toMatch(/focus_main\(&app\)\?;/);
+    expect(body, '主窗带上来却没把那句回执转过去').toMatch(/emit_action_note\(&app, &reply\)/);
+  });
+
+  it('动作回执转呈事件两侧同源：Rust 发、主窗订阅（发了没人听等于提示丢进虚空）', () => {
+    const shell = read('src/components/AppShell.tsx');
+    expect(rust).toContain('pub const ACTION_NOTE_EVENT: &str = "launcher://action-note"');
+    expect(shell, '主窗没订阅 launcher://action-note').toContain("'launcher://action-note'");
+    expect(shell).toMatch(/useBackendEventPayload<[^>]*>\(\s*'launcher:\/\/action-note'/);
+    expect(shell, '订阅了却没走 notify 通道：话收到了但没人呈现').toMatch(/notify\(/);
   });
 });
 
