@@ -456,9 +456,16 @@ jobs:
             Firefox 不在支持范围（需 gecko 配置与商店签名）。
 
           交付前必读：三端**均未签名、均未在目标机做过安装与首启验证**；浏览器扩展同样**尚未在真浏览器上
-          做过端到端填充验证**（ID 由公钥推导这一步是脚本比对，不是浏览器实测）；WebView2 走
-          \`downloadBootstrapper\`，内网无外网时安装阶段会失败。详见仓库内
-          \`docs/部署手册.md\` §1.2/§1.3 与《代码质量审计与三端支持》。
+          做过端到端填充验证**（ID 由公钥推导这一步是脚本比对，不是浏览器实测）。
+          **Windows 安装包已内嵌 WebView2 Evergreen 离线安装器**（\`webviewInstallMode.type = offlineInstaller\`），
+          安装阶段**不需要联网**；装完后运行时由微软的 Edge Update 继续跟进版本，不由本应用负责。
+          代价是 Windows 包体显著增大（内嵌一份完整安装器，确切体积以本 Release 的资源列表为准），
+          请在带宽受限的站点按需分发这一枚。
+          **装机下限：WebView2 运行时需 Chromium 111 及以上** —— 界面依赖 \`@layer\`、\`@property\`、
+          \`color-mix()\` 这三组现代 CSS（Tailwind v4 的官方下限就是 111）；低于下限时样式会成段不生效，
+          表现为圆角、间距与配色一起不对。核对方法：装好后打开 系统管理 → 安全设置 → 系统信息，
+          下面那行「渲染自检」直接给出 Chromium 主版本与 \`color-mix\` 支持与否，不需要 devtools 也不需要日志。
+          详见仓库内 \`docs/部署手册.md\` §1.2/§1.3 与《代码质量审计与三端支持》。
           EOF
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" out/* --clobber

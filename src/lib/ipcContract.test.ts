@@ -530,3 +530,43 @@ describe('导入改写元数据后，详情缓存要一起作废', () => {
     expect(qc).toMatch(/targetDetailAll: \['targetDetail'\]/);
   });
 });
+
+/**
+ * Windows 运行时分发的口径必须三处同源（2026-11-20 交付方定的两件事：随包分发离线安装器、
+ * 把 Chromium ≥ 111 写成装机条件）。
+ *
+ * 为什么要有这条：`tauri.conf.json` 里那两档 bootstrapper 模式，源码注释自己写着
+ * `Requires an internet connection`——内网装机在安装阶段就失败，而这句话在配置、
+ * 发布说明模板、界面提示三个地方各写一遍，改配置的人不会想起去改模板。
+ * Release 正文由工作流的 heredoc 固定生成，所以它也必须被扫。
+ */
+describe('Windows WebView2 分发与装机下限三处同源', () => {
+  const conf = JSON.parse(read('src-tauri/tauri.conf.json')) as {
+    bundle: { windows?: { webviewInstallMode?: { type?: string } } };
+  };
+  const workflow = read('.github/workflows/release.yml');
+  const probe = read('src/components/system/SecuritySection.tsx');
+
+  it('安装模式必须是离线那一档，不许退回需要联网的两档', () => {
+    const type = conf.bundle.windows?.webviewInstallMode?.type ?? '';
+    expect(type).toBe('offlineInstaller');
+    expect(['downloadBootstrapper', 'embedBootstrapper']).not.toContain(type);
+  });
+
+  it('发布说明模板里不许再出现"走 downloadBootstrapper"那类旧口径', () => {
+    expect(workflow).not.toMatch(/`\\?downloadBootstrapper`?，内网/);
+    expect(workflow, 'Release 正文没写清离线分发这一件事，装机的人会以为要联网').toContain('offlineInstaller');
+  });
+
+  it('Chromium 111 这个下限在模板与界面提示里都得在（只有一个数会漂）', () => {
+    expect(workflow).toContain('Chromium 111');
+    expect(probe).toContain('Chromium 111');
+  });
+
+  it('界面自检必须真的去读 color-mix（下限能不能满足，用它判，不读 UA 字符串里的号）', () => {
+    // 实际写法是经一层 supports() 包装再调 CSS.supports（为了在非浏览器环境下不炸），
+    // 所以两条都要在：既证它问的是引擎能力，也证问的确实是 color-mix
+    expect(probe).toMatch(/CSS\.supports\s*\(/);
+    expect(probe).toMatch(/supports\('color',\s*'color-mix\(/);
+  });
+});

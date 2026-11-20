@@ -46,7 +46,7 @@
     "macOS": { "signingIdentity": "-" },
     "linux": { "deb": { "section": "utils" } },
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "webviewInstallMode": { "type": "offlineInstaller", "silent": true },
       "wix": { "language": "zh-CN" }
     }
   }
