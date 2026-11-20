@@ -200,6 +200,10 @@ pub struct ImportCommitResult {
     pub imported_rows: usize,
     pub created_targets: usize,
     pub created_items: usize,
+    /// 账号已存在、密码不同：仅更新了密码的凭据条数
+    pub updated_items: usize,
+    /// 账号与密码都相同：整行未写入的行数
+    pub unchanged_rows: usize,
     pub skipped_rows: usize,
     pub conflict_rows: usize,
     pub errors: Vec<RowError>,
@@ -362,7 +366,15 @@ fn apply_browser_shape(row: &mut ImportRow) {
     if !addr.is_empty() {
         let scheme = addr.split(':').next().unwrap_or("").to_ascii_lowercase();
         match scheme.as_str() {
-            "https" | "http" => row.target_type = "web".into(),
+            "https" | "http" => {
+                row.target_type = "web".into();
+                // 浏览器导出的 CSV 没有「精确Origin」列。留空会让票据绑到带路径/尾斜杠的
+                // url 原文上，与扩展上报的纯 origin 逐字比对失败（ORIGIN_NOT_ALLOWED /
+                // NO_PENDING_GRANT）。仅在文件没显式提供时从地址派生，显式值一律尊重。
+                if row.allowed_origin.trim().is_empty() {
+                    row.allowed_origin = derive_allowed_origin(&addr);
+                }
+            }
             "ssh" | "sftp" | "ftp" | "telnet" | "rdp" | "vnc" => row.target_type = "terminal".into(),
             "mysql" | "postgresql" | "oracle" | "sqlserver" | "jdbc" => row.target_type = "database".into(),
             // 没有协议前缀（`10.0.0.22:22` 这类裸主机）：整列当主机用，否则 validate_row
@@ -392,6 +404,17 @@ fn apply_browser_shape(row: &mut ImportRow) {
     }
     if row.display_name.trim().is_empty() {
         row.display_name = host_label(&addr);
+    }
+}
+
+/// 从网页地址派生「允许填充 Origin」：只要 `scheme://host[:port]`，去掉路径、query、
+/// fragment 与尾部斜杠；默认端口省略、非默认端口保留。与前端 `targetAddress.ts` 的
+/// `${u.protocol}//${u.host}` 逐字对齐 —— 填充链路按 origin 做精确字符串比对，
+/// 多一个字符就会整条链断掉。非 http(s) 或解析失败一律返回空串（终端/数据库不派生）。
+fn derive_allowed_origin(addr: &str) -> String {
+    match url::Url::parse(addr.trim()) {
+        Ok(u) if matches!(u.scheme(), "http" | "https") => u.origin().ascii_serialization(),
+        _ => String::new(),
     }
 }
 
@@ -693,18 +716,36 @@ fn normalize_addr(s: &str) -> String {
 /// 提交导入。conflict_policy：skip=跳过冲突行 / update=复用已有目标 / abort=有冲突即整体中止。
 /// 一行落库的结果。CSV 导入与加密容器导入共用这一条写入路径，
 /// 两条路必须给出完全相同的默认账号/分组/标签语义，所以不各写一份。
+/// 一行凭据在账号级 upsert 里的落点。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ItemDisposition {
+    /// 目标下没有同用户名的账号 → 新增
+    Created,
+    /// 有同用户名的账号、密码不同 → 只更新了密码
+    PasswordUpdated,
+    /// 有同用户名的账号、密码相同 → 整行未写
+    Unchanged,
+}
+
 pub(crate) enum RowOutcome {
-    /// 凭据已写入。`new_target` 表示这一行顺带新建了目标；
+    /// 凭据已处理（写入或判定无变化）。`new_target` 表示这一行顺带新建了目标；
     /// `conflicted` 表示这一行复用的是**本次导入开始之前**就已在台账里的目标
     /// （预览阶段把它算作冲突，所以提交侧必须同样算，只是照常写入）。
     /// 本次运行内自己刚建出来的目标不算冲突——见 `RunTargets`。
-    Written { new_target: bool, conflicted: bool },
+    Written { new_target: bool, conflicted: bool, disposition: ItemDisposition },
     /// 目标已存在（或文件内别名重复）且冲突策略是 skip
     ConflictSkipped,
     /// 同上，冲突策略是 abort（调用方负责把任务标成中止）
     ConflictAbort,
     /// 这一行被拒绝（类型不在允许列表、或写入返回错误），带行级错误
     Rejected(RowError),
+}
+
+/// 目标下的一条既有凭据：item_id 用于定位，payload 用于按用户名/密码比对并在改密时保留其余字段。
+#[derive(Clone)]
+struct IndexedItem {
+    item_id: String,
+    payload: repo::CredentialPayload,
 }
 
 /// 本次导入运行内的两张备忘录：已经建出来/解析出来的目标，以及本运行内写过的 (目标, 别名)。
@@ -718,6 +759,10 @@ pub(crate) enum RowOutcome {
 pub(crate) struct RunTargets {
     by_name: std::collections::HashMap<String, String>,
     aliases: std::collections::HashSet<String>,
+    /// 每个目标下的既有凭据索引（按账号身份键）。惰性构建：某个目标第一次被写时才解密
+    /// 一轮，之后同一目标的所有行都走内存，避免逐行解密退化成 O(N²) 拖垮大批量导入。
+    /// CSV 导入与容器导入共用本结构，因此两条路的去重语义天然一致。
+    item_index: std::collections::HashMap<String, std::collections::HashMap<String, IndexedItem>>,
 }
 
 impl RunTargets {
@@ -738,6 +783,42 @@ impl RunTargets {
     /// 首次出现返回 false 并登记；已出现过返回 true（=文件内重复别名）。
     fn note_alias(&mut self, name: &str, alias: &str) -> bool {
         !self.aliases.insert(Self::alias_key(name, alias))
+    }
+    /// 取（必要时构建）某目标下的既有凭据索引。用户名是加密字段，只能用解密后的
+    /// `CredentialPayload.username` 做身份键，SQL 层没有可查的 (target_id, username) 唯一键。
+    fn items_of(
+        &mut self,
+        db: &Db,
+        vk: &VaultKey,
+        actor: &str,
+        target_id: &str,
+    ) -> Result<&mut std::collections::HashMap<String, IndexedItem>> {
+        if !self.item_index.contains_key(target_id) {
+            let mut index = std::collections::HashMap::new();
+            for item in repo::list_items_for_target(db, target_id, actor)? {
+                // 解密失败的单条凭据不进索引：宁可新建一条，也不要把密码改到认不出的记录上。
+                if let Ok(payload) = repo::item_payload(vk, db, &item.id) {
+                    index.insert(
+                        item_identity(&payload.username, &item.account_alias),
+                        IndexedItem { item_id: item.id, payload },
+                    );
+                }
+            }
+            self.item_index.insert(target_id.to_string(), index);
+        }
+        Ok(self.item_index.get_mut(target_id).expect("索引刚插入"))
+    }
+}
+
+/// 账号身份键 = 目标下的用户名（trim 后精确比对，不做 lowercase：账号常大小写敏感）。
+/// 用户名空的凭据（例如只存令牌/私钥的条目）退化为按账号别名区分，并用 NUL 前缀开一个
+/// 独立命名空间，避免与某个真实用户名恰好等于该别名的账号误合并。
+fn item_identity(username: &str, alias: &str) -> String {
+    let name = username.trim();
+    if name.is_empty() {
+        format!("\u{0}alias:{}", alias.trim().to_lowercase())
+    } else {
+        name.to_string()
     }
 }
 
@@ -789,6 +870,14 @@ pub(crate) fn write_import_row(
         return Ok(RowOutcome::Rejected(first));
     }
     let target_type = resolved_type(row, default_type);
+    // 这一行最终要用的精确 Origin：文件显式给的优先，缺了就从 url 派生（仅网页类）。
+    // CSV 的浏览器形状已在 apply_browser_shape 里补过；容器导入不走 parse_csv，
+    // 这里是唯一的兜底点，保证两条导入路都不会落下"allowed_origin 为空"的坏数据。
+    let row_origin = if row.allowed_origin.trim().is_empty() {
+        if target_type == "web" { derive_allowed_origin(&row.url) } else { String::new() }
+    } else {
+        row.allowed_origin.trim().to_string()
+    };
     // 审查 F3：`allow_insecure_protocols` 这道闸门原先**只在交互新建/编辑目标时判**
     // （commands/accounts.rs 的两处），导入这条路直接建目标——写着 `telnet` / `ftp` 的一份
     // CSV 或容器，能在策略关闭的情况下把明文协议目标灌进台账。判据与交互侧必须是同一个函数，
@@ -834,7 +923,7 @@ pub(crate) fn write_import_row(
         };
         let meta = repo::TargetSecretPayload {
             url: row.url.clone(),
-            allowed_origin: row.allowed_origin.clone(),
+            allowed_origin: row_origin.clone(),
             protocol: row.protocol.clone(),
             host: row.host.clone(),
             port: row.port.clone(),
@@ -860,30 +949,72 @@ pub(crate) fn write_import_row(
         (target_id, false, false)
     };
 
-    let payload = repo::CredentialPayload {
-        username: row.username.clone(),
-        password: crate::crypto::SecretString::new(row.password.clone()),
-        token: crate::crypto::SecretString::new(row.token.clone()),
-        private_key: crate::crypto::SecretString::new(row.private_key.clone()),
-        passphrase: crate::crypto::SecretString::new(row.passphrase.clone()),
-        auth_method: row.auth_method.clone(),
-        note: row.note.clone(),
-        confirm_before_fill: true,
-        ..Default::default()
-    };
-    let tags: Vec<String> = row.tags.split([',', '，']).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
-    let item = repo::NewItem {
-        target_id,
-        account_alias: row.account_alias.clone(),
-        tags,
-        favorite: false,
-        payload,
-        set_as_default: row.set_default,
-    };
-    match repo::create_item(db, vk, actor, &item) {
-        Ok(_) => Ok(RowOutcome::Written { new_target, conflicted }),
-        Err(e) => Ok(RowOutcome::Rejected(row_reject(0, e.code(), "该行写入失败（原因已记入审计）", None))),
+    // 复用导入前已有的目标时，把库里空着的 allowed_origin 补上（历史 Chrome 形状导入留下的
+    // 坏数据）。update_target_meta 是整包覆盖，必须先读回完整 meta 再只改这一个字段。
+    if !new_target && !row_origin.is_empty() {
+        let mut meta = repo::target_meta(vk, db, &target_id)?;
+        if meta.allowed_origin.trim().is_empty() {
+            meta.allowed_origin = row_origin.clone();
+            repo::update_target_meta(db, vk, actor, &target_id, &meta, None, None)?;
+        }
     }
+
+    // 账号级 upsert：同一目标下按用户名（解密后）判重。别名不能当身份键——浏览器形状会把
+    // 别名补成用户名，而手工录入那条可能是「默认账号」，按别名比会把同一个账号当成两条。
+    let identity = item_identity(&row.username, &row.account_alias);
+    let disposition = {
+        let index = run.items_of(db, vk, actor, &target_id)?;
+        match index.get(&identity).cloned() {
+            Some(existing) => {
+                if existing.payload.password.expose() == row.password.as_str() {
+                    // 账号与密码都一样：整行不写，version 也不动，绝不重复创建记录。
+                    ItemDisposition::Unchanged
+                } else {
+                    // 只换密码。clone 整份载荷以保住 token / 私钥 / 备注 / confirm_before_fill；
+                    // alias 与 tags 传 None，别名、标签、默认账号标记一律不动。
+                    let mut p = existing.payload.clone();
+                    p.password = crate::crypto::SecretString::new(row.password.clone());
+                    match repo::update_item_payload(db, vk, actor, &existing.item_id, &p, None, None) {
+                        Ok(()) => {
+                            index.insert(identity.clone(), IndexedItem { item_id: existing.item_id, payload: p });
+                            ItemDisposition::PasswordUpdated
+                        }
+                        Err(e) => return Ok(RowOutcome::Rejected(row_reject(0, e.code(), "该行写入失败（原因已记入审计）", None))),
+                    }
+                }
+            }
+            None => {
+                let payload = repo::CredentialPayload {
+                    username: row.username.clone(),
+                    password: crate::crypto::SecretString::new(row.password.clone()),
+                    token: crate::crypto::SecretString::new(row.token.clone()),
+                    private_key: crate::crypto::SecretString::new(row.private_key.clone()),
+                    passphrase: crate::crypto::SecretString::new(row.passphrase.clone()),
+                    auth_method: row.auth_method.clone(),
+                    note: row.note.clone(),
+                    confirm_before_fill: true,
+                    ..Default::default()
+                };
+                let tags: Vec<String> = row.tags.split([',', '，']).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+                let item = repo::NewItem {
+                    target_id: target_id.clone(),
+                    account_alias: row.account_alias.clone(),
+                    tags,
+                    favorite: false,
+                    payload: payload.clone(),
+                    set_as_default: row.set_default,
+                };
+                match repo::create_item(db, vk, actor, &item) {
+                    Ok(id) => {
+                        index.insert(identity.clone(), IndexedItem { item_id: id, payload });
+                        ItemDisposition::Created
+                    }
+                    Err(e) => return Ok(RowOutcome::Rejected(row_reject(0, e.code(), "该行写入失败（原因已记入审计）", None))),
+                }
+            }
+        }
+    };
+    Ok(RowOutcome::Written { new_target, conflicted, disposition })
 }
 
 pub fn import_commit(db: &Db, vk: &VaultKey, actor: &str, job_id: &str, path_hint: Option<&str>, conflict_policy: &str, default_type: Option<&str>, lk: &TargetLookup) -> Result<ImportCommitResult> {
@@ -914,6 +1045,8 @@ pub fn import_commit(db: &Db, vk: &VaultKey, actor: &str, job_id: &str, path_hin
     let started = std::time::Instant::now();
     let mut created_targets = 0usize;
     let mut created_items = 0usize;
+    let mut updated_items = 0usize;
+    let mut unchanged_rows = 0usize;
     let mut skipped = 0usize;
     let mut conflicts = 0usize;
     let mut errors: Vec<RowError> = Vec::new();
@@ -939,13 +1072,17 @@ pub fn import_commit(db: &Db, vk: &VaultKey, actor: &str, job_id: &str, path_hin
                 continue;
             }
             match write_import_row(db, vk, actor, row, conflict_policy, default_type, lk, &mut run)? {
-                RowOutcome::Written { new_target, conflicted } => {
+                RowOutcome::Written { new_target, conflicted, disposition } => {
                     if new_target {
                         created_targets += 1;
                     } else if conflicted {
-                        conflicts += 1; // 复用导入前已有的目标（update 策略）也是冲突，只是照常写入
+                        conflicts += 1; // 复用导入前已有的目标（update 策略）也是冲突，只是照常处理
                     }
-                    created_items += 1;
+                    match disposition {
+                        ItemDisposition::Created => created_items += 1,
+                        ItemDisposition::PasswordUpdated => updated_items += 1,
+                        ItemDisposition::Unchanged => unchanged_rows += 1,
+                    }
                 }
                 RowOutcome::ConflictSkipped => {
                     conflicts += 1;
@@ -959,6 +1096,8 @@ pub fn import_commit(db: &Db, vk: &VaultKey, actor: &str, job_id: &str, path_hin
                         imported_rows: created_items,
                         created_targets,
                         created_items,
+                        updated_items,
+                        unchanged_rows,
                         skipped_rows: skipped,
                         conflict_rows: conflicts,
                         errors: errors.clone(),
@@ -983,14 +1122,15 @@ pub fn import_commit(db: &Db, vk: &VaultKey, actor: &str, job_id: &str, path_hin
     }
 
     let summary = format!(
-        "导入完成：新建目标 {created_targets} 个，写入凭据 {created_items} 条，跳过 {skipped} 行，冲突 {conflicts} 行，用时 {} 毫秒。",
+        "导入完成：新建目标 {created_targets} 个，新增凭据 {created_items} 条，更新密码 {updated_items} 条，保持不变 {unchanged_rows} 行，跳过 {skipped} 行，冲突 {conflicts} 行，用时 {} 毫秒。",
         started.elapsed().as_millis()
     );
+    let handled_rows = created_items + updated_items + unchanged_rows;
     {
         let conn = db.lock_conn();
         let _ = conn.execute(
             "UPDATE import_jobs SET status='success', total_rows=?2, valid_rows=?3, error_rows=?4, conflict_rows=?5, imported_rows=?6, finished_at=?7 WHERE id=?1",
-            params![job_id, (created_items + skipped) as i64, created_items as i64, distinct_error_rows(&errors) as i64, conflicts as i64, created_items as i64, repo::now()],
+            params![job_id, (handled_rows + skipped) as i64, handled_rows as i64, distinct_error_rows(&errors) as i64, conflicts as i64, created_items as i64, repo::now()],
         );
         let _ = conn.execute("DELETE FROM import_job_errors WHERE job_id=?1", params![job_id]);
         for e in errors.iter().take(MAX_REPORTED_ERRORS) {
@@ -1005,6 +1145,8 @@ pub fn import_commit(db: &Db, vk: &VaultKey, actor: &str, job_id: &str, path_hin
         imported_rows: created_items,
         created_targets,
         created_items,
+        updated_items,
+        unchanged_rows,
         skipped_rows: skipped,
         conflict_rows: conflicts,
         errors: errors.into_iter().take(MAX_REPORTED_ERRORS).collect(),
@@ -1577,6 +1719,8 @@ pub fn container_commit(
 
     let mut created_targets = 0usize;
     let mut created_items = 0usize;
+    let mut updated_items = 0usize;
+    let mut unchanged_rows = 0usize;
     let mut skipped = 0usize;
     let mut conflicts = 0usize;
     let mut errors: Vec<RowError> = Vec::new();
@@ -1585,13 +1729,17 @@ pub fn container_commit(
     for (idx, r) in rows.iter().enumerate() {
         let row_no = idx + 1;
         match write_import_row(db, vk, actor, &ImportRow::from(r), conflict_policy, None, lk, &mut run)? {
-            RowOutcome::Written { new_target, conflicted } => {
+            RowOutcome::Written { new_target, conflicted, disposition } => {
                 if new_target {
                     created_targets += 1;
                 } else if conflicted {
                     conflicts += 1;
                 }
-                created_items += 1;
+                match disposition {
+                    ItemDisposition::Created => created_items += 1,
+                    ItemDisposition::PasswordUpdated => updated_items += 1,
+                    ItemDisposition::Unchanged => unchanged_rows += 1,
+                }
             }
             RowOutcome::ConflictSkipped => {
                 conflicts += 1;
@@ -1604,6 +1752,8 @@ pub fn container_commit(
                     imported_rows: created_items,
                     created_targets,
                     created_items,
+                    updated_items,
+                    unchanged_rows,
                     skipped_rows: skipped,
                     conflict_rows: conflicts,
                     errors: errors.clone().into_iter().take(MAX_REPORTED_ERRORS).collect(),
@@ -1618,7 +1768,7 @@ pub fn container_commit(
     }
 
     let summary = format!(
-        "容器导入完成：新建目标 {created_targets} 个，写入凭据 {created_items} 条，跳过 {skipped} 行，冲突 {conflicts} 行，用时 {} 毫秒。",
+        "容器导入完成：新建目标 {created_targets} 个，新增凭据 {created_items} 条，更新密码 {updated_items} 条，保持不变 {unchanged_rows} 行，跳过 {skipped} 行，冲突 {conflicts} 行，用时 {} 毫秒。",
         started.elapsed().as_millis()
     );
     Ok(ImportCommitResult {
@@ -1626,6 +1776,8 @@ pub fn container_commit(
         imported_rows: created_items,
         created_targets,
         created_items,
+        updated_items,
+        unchanged_rows,
         skipped_rows: skipped,
         conflict_rows: conflicts,
         errors: errors.into_iter().take(MAX_REPORTED_ERRORS).collect(),
@@ -1767,5 +1919,66 @@ mod tests {
         assert_eq!(normalize_addr("https://A.example/x?y=1"), "a.example");
         assert_eq!(normalize_addr("a.example"), "a.example");
         assert_eq!(normalize_addr("ssh://10.0.0.1:22"), "10.0.0.1:22");
+    }
+
+    /// 精确 Origin 必须是纯 scheme://host[:port]：路径、query、fragment、尾斜杠一个都不留，
+    /// 否则填充链路按 origin 逐字比对会整条断掉（ORIGIN_NOT_ALLOWED / NO_PENDING_GRANT）。
+    #[test]
+    fn derive_allowed_origin_strips_everything_but_the_origin() {
+        assert_eq!(derive_allowed_origin("https://oa.example.cn/"), "https://oa.example.cn");
+        assert_eq!(derive_allowed_origin("https://oa.example.cn/login?a=1#f"), "https://oa.example.cn");
+        assert_eq!(derive_allowed_origin("http://sso.impc.com.cn/sgid-sso/login?service=x"), "http://sso.impc.com.cn");
+        assert_eq!(derive_allowed_origin("http://10.0.0.8:8080/x"), "http://10.0.0.8:8080");
+        assert_eq!(derive_allowed_origin("HTTPS://OA.EXAMPLE.CN/login"), "https://oa.example.cn");
+        assert_eq!(derive_allowed_origin("https://oa.example.cn:443/x"), "https://oa.example.cn", "默认端口要省略");
+        // 非网页协议与解析不了的地址一律不派生，交给别的分支或校验去处理
+        assert_eq!(derive_allowed_origin("ftp://a.example/x"), "");
+        assert_eq!(derive_allowed_origin("ssh://10.0.0.1:22"), "");
+        assert_eq!(derive_allowed_origin("不是网址"), "");
+        assert_eq!(derive_allowed_origin(""), "");
+    }
+
+    /// Chrome / Edge 导出的五列没有「精确Origin」，导入后必须自动派生，开箱即可自动填充。
+    #[test]
+    fn browser_shape_rows_derive_allowed_origin() {
+        let text = "name,url,username,password,note\n,https://oa.example.cn/,ops1,p1,\n,http://yxglpt.impc.com.cn/inner/login/?a=1,ops2,p2,\n";
+        let (rows, _) = parse_csv(text).unwrap();
+        assert!(rows.iter().all(|(r, e)| r.allowed_origin.starts_with("http") && e.is_empty()), "每行都应派生出 Origin：{:?}", rows);
+        assert_eq!(rows[0].0.allowed_origin, "https://oa.example.cn", "尾部斜杠要去掉");
+        assert_eq!(rows[1].0.allowed_origin, "http://yxglpt.impc.com.cn", "路径与 query 要去掉");
+        assert_eq!(rows[0].0.target_type, "web");
+        assert_eq!(rows[0].0.account_alias, "ops1", "别名仍按用户名补齐");
+    }
+
+    /// 显式提供的精确 Origin 不能被派生值覆盖（F15：导入方可以只允许某一个站点填充）。
+    #[test]
+    fn browser_shape_respects_an_explicit_origin() {
+        let mut r = ImportRow {
+            url: "https://oa.example.cn/login".into(),
+            allowed_origin: "https://sso.example.cn".into(),
+            ..Default::default()
+        };
+        apply_browser_shape(&mut r);
+        assert_eq!(r.allowed_origin, "https://sso.example.cn");
+    }
+
+    /// 终端 / 裸主机那几类没有 http(s) 地址，不该凭空造一个 Origin。
+    #[test]
+    fn browser_shape_does_not_derive_origin_for_terminals() {
+        let mut r = ImportRow { url: "10.0.0.9:22".into(), ..Default::default() };
+        apply_browser_shape(&mut r);
+        assert_eq!(r.target_type, "terminal");
+        assert_eq!(r.allowed_origin, "");
+    }
+
+    /// 账号身份键：用户名 trim 后精确比对（大小写敏感），空用户名退化到别名命名空间。
+    #[test]
+    fn item_identity_uses_username_not_alias() {
+        assert_eq!(item_identity("ops1", "默认账号"), "ops1");
+        assert_eq!(item_identity("  ops1  ", "别的别名"), "ops1");
+        assert_ne!(item_identity("Admin", "x"), item_identity("admin", "x"), "账号大小写敏感");
+        assert_eq!(item_identity("", "ops1"), item_identity("", "OPS1"), "空用户名按别名（忽略大小写）区分");
+        assert_ne!(item_identity("", "ops1"), item_identity("ops1", "任意"), "空用户名不能和真实用户名撞车");
+        assert_ne!(item_identity("", "ops1"), item_identity("", "ops2"));
     }
 }

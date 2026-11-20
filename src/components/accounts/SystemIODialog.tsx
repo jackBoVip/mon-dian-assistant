@@ -47,7 +47,7 @@ function baseName(path: string): string {
  * 不然用户以为文件里的行全进库了。
  */
 function importSummary(res: ImportCommitResult): string {
-  const base = `导入完成：新增 ${res.createdTargets} 个系统、${res.createdItems} 条凭据，跳过 ${res.skippedRows} 行，冲突 ${res.conflictRows} 行。`;
+  const base = `导入完成：新增 ${res.createdTargets} 个系统、${res.createdItems} 条凭据，更新 ${res.updatedItems} 条密码，${res.unchangedRows} 行无变化，跳过 ${res.skippedRows} 行，冲突 ${res.conflictRows} 行。`;
   return res.errors.length ? `${base}其中 ${res.errors.length} 行有错误未写入。` : base;
 }
 
@@ -55,8 +55,10 @@ function importSummary(res: ImportCommitResult): string {
  * 账号中心左栏的导入 / 导出弹窗（原型 807-862 的 importView / exportView）。
  *
  * 导入按文件内容自动识别 CSV / XLSX（后端 parse_upload 先嗅探再按表头判定，扩展名说了不算），
- * 冲突一律按「跳过」提交。口令加密容器（`.mdaexport`）与「更新 / 中止」两档后端命令仍在，
- * 但 2026-10-22 BE 轮起界面上没有入口——原先接在「导入/导出」页，那一页已整页移除（见 §1-BE）。
+ * 默认按「更新」提交：后端按 (目标, 用户名) 逐行判定——不存在则新增、密码不同仅改密码、
+ * 完全相同保持不变，绝不重复创建记录。这样 Chrome 导出的文件导入后即可直接使用，不用再手工建账号。
+ * 「跳过 / 中止」两档后端命令仍在，但界面不暴露选择器（保持弹窗只有一次确认）。
+ * 口令加密容器（`.mdaexport`）原先接在「导入/导出」页，那一页 2026-10-22 BE 轮已整页移除（见 §1-BE）。
  * 导出是 Chrome / Edge 的形状：name,url,username,password,note 五列，勾了「包含明文密码」
  * 就把可读口令写进文件——文件本身没有任何保护，所以那句风险话必须留在界面上。
  * 交付方 2026-10-19：导出去掉主密码二次确认，点「确认导出」直接落盘（出厂策略随之关掉，
@@ -141,7 +143,7 @@ export function SystemIODialog({ open, mode, format, targetId, targetName, onClo
   const commitMut = useMutation({
     mutationFn: () => {
       if (!preview) throw new Error('缺少预览结果');
-      return api.importCommit(preview.jobId, 'skip');
+      return api.importCommit(preview.jobId, 'update');
     },
     onSuccess: (res) => {
       setPreview(null);

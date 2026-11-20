@@ -173,7 +173,9 @@ fn container_roundtrip_between_two_independent_vaults() {
 
     let update = importexport::container_commit(&db, &vk, &user_id, &container, CONTAINER_PASS, &pv2.fingerprint, "update", &lk2).unwrap();
     assert_eq!(update.created_targets, 0, "update 不得重复建目标");
-    assert_eq!(update.created_items, 3, "update 复用已有目标，只新增凭据");
+    assert_eq!(update.created_items, 0, "重导同一份容器：同账号同密码，一条都不该重复创建");
+    assert_eq!(update.unchanged_rows, 3, "三行都应判定为保持不变");
+    assert_eq!(repo::list_items_for_target(&db, &a_target.id, &user_id).unwrap().len(), before, "凭据数不得增长");
     let targets_after = repo::list_targets(&db).unwrap();
     assert_eq!(targets_after.len(), 3, "三条目标不得变成六条");
 }

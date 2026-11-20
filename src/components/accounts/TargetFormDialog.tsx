@@ -119,9 +119,29 @@ function TargetFields({
   const [displayName, setDisplayName] = useState(seed.displayName);
   const [address, setAddress] = useState(seed.address);
   const [groupId, setGroupId] = useState(seed.groupId ?? '');
+  // 精确 Origin 单独可编辑：详情抽屉撤掉后这一栏既看不见也改不了，导入来的空值用户永远修不好。
+  const [allowedOrigin, setAllowedOrigin] = useState(seed.meta?.allowedOrigin ?? '');
+  const [originTouched, setOriginTouched] = useState(false);
 
   const addressField = ADDRESS_FIELD_BY_TYPE[targetType] ?? { label: '地址', placeholder: '' };
   const trimmedAddress = address.trim();
+
+  // 派生结果实时显示：用户填一栏就得看得见后端拿到的是哪几栏，端口写错在这里就能发现
+  const derived = deriveAddress(targetType, trimmedAddress);
+  const derivedOrigin = derived.allowedOrigin;
+  /**
+   * 精确 Origin 的三条口径合在一处：
+   * - F15：编辑时地址一字未动、后端原有非空精确 Origin（导入方刻意指定、可能 ≠ 地址 origin）
+   *   必须原样带回，否则保存一次就把填充指向了别的站点；
+   * - 自愈：编辑时地址没动、原值为空（Chrome 形状导入留下的坏数据）→ 用派生值补齐，
+   *   「打开编辑 → 保存」即可修好，不必先改一次地址；
+   * - 跟随：新建、或地址改了、或用户没手填过 Origin → 一律跟随当前地址派生。
+   * 用户一旦手动编辑过这一栏就始终以手填值为准，改地址也不覆盖。
+   */
+  const preserveImported =
+    editing && trimmedAddress === seed.address.trim() && !!seed.meta?.allowedOrigin.trim();
+  const autoOrigin = preserveImported ? (seed.meta?.allowedOrigin ?? derivedOrigin) : derivedOrigin;
+  const effectiveOrigin = originTouched ? allowedOrigin : autoOrigin;
 
   const groups = useQuery({
     queryKey: queryKeys.groups,
@@ -152,15 +172,10 @@ function TargetFields({
       if (seed.meta) {
         input.tenant = seed.meta.tenant;
         input.vendor = seed.meta.vendor;
-        /**
-         * 审查 F15：精确 Origin 同样是导入带进来的（`allowed_origin` 可以 **不等于** URL 的
-         * origin，而那正是导入方选择"只允许这一个站点填充"的手段；填充链路按 origin 逐字比对，
-         * 见 ipc.rs 与 commands/launcher.rs 的 OriginNotAllowed）。
-         * 所以地址一字没动的编辑（只改名称/换分组）必须原样带回它；地址一改就要重新派生，
-         * 否则会把填充指向旧站点。
-         */
-        if (trimmedAddress === seed.address.trim()) input.allowedOrigin = seed.meta.allowedOrigin;
       }
+      // 精确 Origin 以界面上那一栏为准：可见、可改，空值自愈与 F15 保留都由 effectiveOrigin 决定。
+      // buildTargetInput 已带 allowedOrigin 键，这里只覆盖值，字段集合一个不少。
+      input.allowedOrigin = effectiveOrigin.trim();
       return editing ? api.updateTarget(targetId, input) : api.createTarget(input);
     },
     onSuccess: (row) => {
@@ -203,9 +218,6 @@ function TargetFields({
     const creatable: string[] = [...CREATABLE_TARGET_TYPES];
     return creatable.includes(seed.targetType) ? creatable : [seed.targetType, ...creatable];
   }, [seed.targetType]);
-  // 派生结果实时显示：用户填一栏就得看得见后端拿到的是哪几栏，端口写错在这里就能发现
-  const derived = deriveAddress(targetType, trimmedAddress);
-
   return (
     <Modal
       open
@@ -252,6 +264,25 @@ function TargetFields({
           onChange={(e) => setAddress(e.target.value)}
           placeholder={addressField.placeholder}
         />
+
+        <TextField
+          label="允许填充 Origin"
+          value={effectiveOrigin}
+          onChange={(e) => {
+            setAllowedOrigin(e.target.value);
+            setOriginTouched(true);
+          }}
+          placeholder={derivedOrigin ? '留空则跟随上方地址' : '终端 / 数据库通常留空'}
+          hint="未手动修改时自动跟随上方地址派生；手动填写后以手填值为准。填充按此值逐字比对。"
+        />
+        <p className="text-xs text-ink-muted" aria-live="polite">
+          按地址派生：{derivedOrigin || '（当前类型不派生 Origin）'}
+        </p>
+        {effectiveOrigin.trim() && effectiveOrigin.trim() !== derivedOrigin ? (
+          <p className="text-xs text-warning">
+            当前值与地址派生值不一致，填充将以「{effectiveOrigin.trim()}」逐字比对。
+          </p>
+        ) : null}
 
         {trimmedAddress ? (
           <p className="text-xs text-ink-muted">

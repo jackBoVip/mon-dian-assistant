@@ -12,7 +12,7 @@ import type { ExportResult, ImportCommitResult, ImportPreview } from '../../lib/
  *  —— 导入提交成功后弹窗自己关闭，那四个计数只活在提示条里（交付方 2026-10-19）；
  *  —— 含明文口令的导出不设闸门：点「确认导出」直接落盘，界面上不再出现主密码二次认证（交付方 2026-10-19）；
  *  —— exportCommit 收到的就是 format + shape:browser + 左栏当前那一个系统；
- *  —— 冲突行只在识别那行报数，不再向用户解释本弹窗按什么策略提交。
+ *  —— 冲突行只在识别那行报数，界面不解释策略；提交统一走 update，由后端按账号去重。
  */
 
 const dialogs = vi.hoisted(() => ({
@@ -70,6 +70,8 @@ function commitResult(over: Partial<ImportCommitResult> = {}): ImportCommitResul
     importedRows: 6,
     createdTargets: 0,
     createdItems: 5,
+    updatedItems: 0,
+    unchangedRows: 0,
     skippedRows: 1,
     conflictRows: 1,
     errors: [],
@@ -205,7 +207,7 @@ describe('导入面（原型 819-841）', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '开始导入' }));
     await waitFor(() => expect(props.onClose).toHaveBeenCalledTimes(1));
-    expect(lastNotify()?.text).toBe('导入完成：新增 2 个系统、5 条凭据，跳过 1 行，冲突 1 行。');
+    expect(lastNotify()?.text).toBe('导入完成：新增 2 个系统、5 条凭据，更新 0 条密码，0 行无变化，跳过 1 行，冲突 1 行。');
     // 关窗那一刻内部状态已经清干净：父级哪怕不改 open，框里也不会残留上一份文件
     expect(screen.getByRole('button', { name: DROP_ZONE })).toBeInTheDocument();
     expect(screen.getByText('点击或将文件拖拽至此区域')).toBeInTheDocument();
@@ -263,7 +265,7 @@ describe('导入面（原型 819-841）', () => {
     expect(apiMock.importPreview).not.toHaveBeenCalled();
   });
 
-  it('冲突行一律按「跳过」提交，成功后弹窗关闭，同一份作业不会被点两遍', async () => {
+  it('按「更新」策略提交，由后端按账号去重；成功后弹窗关闭，同一份作业不会被点两遍', async () => {
     dialogs.openFile.mockResolvedValue('/tmp/凭据.csv');
     apiMock.importPreview.mockResolvedValue(preview({ fileFormat: 'csv' }));
     apiMock.importCommit.mockResolvedValue(commitResult());
@@ -272,7 +274,7 @@ describe('导入面（原型 819-841）', () => {
     await screen.findByText(/已识别为 csv/);
 
     fireEvent.click(screen.getByRole('button', { name: '开始导入' }));
-    await waitFor(() => expect(apiMock.importCommit).toHaveBeenCalledWith('job-1', 'skip'));
+    await waitFor(() => expect(apiMock.importCommit).toHaveBeenCalledWith('job-1', 'update'));
     await waitFor(() => expect(props.onClose).toHaveBeenCalledTimes(1));
     expect(lastNotify()?.text).toContain('导入完成');
     // preview 已清空：就算父级没关窗，那颗钮也点不动，第二遍提交发不出去
@@ -301,7 +303,7 @@ describe('导入面（原型 819-841）', () => {
     expect(screen.queryByRole('button', { name: '到导入导出页' })).toBeNull();
   });
 
-  it('有冲突行时也不再向用户解释「一律按跳过提交」，冲突数只留在识别那行里（交付方 2026-10-19）', async () => {
+  it('有冲突行时也不向用户解释提交策略，冲突数只留在识别那行里（交付方 2026-10-19）', async () => {
     dialogs.openFile.mockResolvedValue('/tmp/凭据.csv');
     apiMock.importPreview.mockResolvedValue(preview({ fileFormat: 'csv', conflictRows: 3 }));
     renderDialog({ mode: 'import' });
@@ -311,7 +313,7 @@ describe('导入面（原型 819-841）', () => {
     expect(screen.queryByText(/本弹窗一律按「跳过」提交/)).toBeNull();
     expect(screen.queryByText(/需要「更新」/)).toBeNull();
     expect(screen.queryByText(/请到「导入导出」页/)).toBeNull();
-    // 撤的只是那句解释：后端计数照旧播报，提交策略也还是 skip
+    // 撤的只是那句解释：后端计数照旧播报，提交策略统一为 update
     expect(screen.getByText(/冲突 3 行/)).toBeInTheDocument();
   });
 

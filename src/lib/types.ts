@@ -770,6 +770,10 @@ export interface ImportCommitResult {
   importedRows: number
   createdTargets: number
   createdItems: number
+  /** 账号已存在、密码不同：仅更新了密码的凭据条数 */
+  updatedItems: number
+  /** 账号与密码都相同：整行未写入的行数 */
+  unchangedRows: number
   skippedRows: number
   conflictRows: number
   errors: RowError[]

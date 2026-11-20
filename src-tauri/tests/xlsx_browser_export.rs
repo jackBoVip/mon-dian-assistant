@@ -143,8 +143,16 @@ fn browser_shape_is_exactly_the_five_chrome_columns_and_reimports() {
     assert_eq!(type_of(&db, "机房终端B"), "terminal");
     assert_eq!(payload_of(&db, &vk, &user, "营销系统A").username, "user_a");
     assert_eq!(payload_of(&db, &vk, &user, "营销系统A").password.expose(), PASS_A);
-    let items = repo::list_items_for_target(&db, repo::list_targets(&db).unwrap().iter().find(|t| t.display_name == "营销系统A").unwrap().id.as_str(), &user).unwrap();
+    let a_target = repo::list_targets(&db).unwrap().iter().find(|t| t.display_name == "营销系统A").unwrap().id.clone();
+    let items = repo::list_items_for_target(&db, a_target.as_str(), &user).unwrap();
     assert_eq!(items[0].account_alias, "user_a", "别名应由用户名推断出来，而不是留空被拒");
+    // 浏览器形状导出里没有「精确Origin」列，导入侧必须从带路径的 url 派生出纯 origin，
+    // 否则扩展上报的 location.origin 逐字比对不上，自动填充整条链是死的。
+    assert_eq!(
+        repo::target_meta(&vk, &db, &a_target).unwrap().allowed_origin,
+        "https://a.example.internal",
+        "带 /login 的 url 必须派生出纯 Origin"
+    );
     // 名称以 = 开头的行在 CSV 里带 `'` 前缀，导入侧按非秘密列还原
     assert!(repo::list_targets(&db).unwrap().iter().any(|t| t.display_name == INJECT_NAME), "CSV 的注入前缀应被还原掉");
 }
@@ -171,6 +179,11 @@ fn a_real_chrome_shaped_file_imports_without_alias_or_type_columns() {
     // name 空 → 用站点主机当目标名；类型由 https:// 前缀推断
     assert_eq!(type_of(&db, "oa.example.cn"), "web", "目标名应取自地址主机部分");
     assert_eq!(payload_of(&db, &vk, &user, "mail.example.cn").note, "邮箱");
+    // 真正的 Chrome 文件 url 带尾部斜杠，派生出的 Origin 必须没有斜杠，否则填充按逐字比对会失败
+    let oa = repo::list_targets(&db).unwrap().iter().find(|t| t.display_name == "oa.example.cn").unwrap().id.clone();
+    let mail = repo::list_targets(&db).unwrap().iter().find(|t| t.display_name == "mail.example.cn").unwrap().id.clone();
+    assert_eq!(repo::target_meta(&vk, &db, &oa).unwrap().allowed_origin, "https://oa.example.cn");
+    assert_eq!(repo::target_meta(&vk, &db, &mail).unwrap().allowed_origin, "https://mail.example.cn");
 }
 
 #[test]

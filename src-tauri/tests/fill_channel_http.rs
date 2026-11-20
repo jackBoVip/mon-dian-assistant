@@ -161,8 +161,10 @@ fn http_origin_completes_challenge_and_fill_over_the_real_channel() {
 /// - `NO_PENDING_GRANT`：格式过了、台账里也认得这个串，但**没有一张票绑的是它**。
 ///   把台账 Origin 后面接上路径就是这一档——`origin_allowed` 里 `m.url == origin`
 ///   那半句恰好认这个串（它是 `url` 栏的原文），而票绑的是 `allowed_origin` 栏。
-///   所以精确 Origin 栏为空、只有带路径 url 的台账（导入来的常见形状），
-///   扩展永远停在 `NO_PENDING_GRANT` 上静默不填充。
+///   手工构造的「精确 Origin 栏为空、只有带路径 url」台账会永远停在 `NO_PENDING_GRANT`，
+///   这条断言是刻意保留的安全契约；导入侧现在会从 url 派生纯 Origin，不再产生这种坏数据
+///   （正向验证见 `tests/import_e2e.rs` 的
+///   `chrome_shaped_import_binds_fill_ticket_to_the_pure_origin`）。
 #[test]
 fn http_relaxation_still_requires_the_exact_ledger_origin() {
     let h = setup();

@@ -5,12 +5,16 @@
 //! 这里的 CSV 是合成数据，不含任何真实凭据。
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
+use mon_dian_assistant_lib::auth::session::{Session, VaultState};
 use mon_dian_assistant_lib::auth::users;
+use mon_dian_assistant_lib::crypto::tokens::TicketStore;
 use mon_dian_assistant_lib::crypto::vault_key::VaultKey;
 use mon_dian_assistant_lib::db::{repo, Db};
 use mon_dian_assistant_lib::importexport::{self, TargetLookup};
+use mon_dian_assistant_lib::quick_launcher::{actions::issue_fill_ticket, search::SearchIndex};
 
 const HEADER: &str = "目标名称,目标类型,地址,精确Origin,协议,主机,端口,分组,账号别名,标签,用户名,密码,令牌,私钥,私钥口令,认证方式,备注,设为默认";
 
@@ -193,15 +197,17 @@ fn preview_and_commit_cover_errors_conflicts_and_roundtrip() {
     let a05 = targets.iter().find(|t| t.display_name == "营销系统A05").unwrap();
     assert_eq!(a05.group_id.as_deref(), Some(prod.id.as_str()));
 
-    // update：复用已有目标，只加凭据，不产生同名重复目标
+    // update：复用已有目标，按账号 upsert——20 条同账号同密码保持不变，只有两条新账号被写入
     let cm2 = importexport::import_commit(&db, &vk, &user_id, &pv.job_id, None, "update", None, &lk).unwrap();
     assert_eq!(cm2.created_targets, 0, "update 不得重复建目标");
-    assert_eq!(cm2.created_items, 22, "20 个已存在目标 + 既有系统，加上文件内重复的那一行都可复用写入");
+    assert_eq!(cm2.created_items, 2, "只有「既有系统」与文件里那条新用户名的行是新增账号");
+    assert_eq!(cm2.unchanged_rows, 20, "20 条同账号同密码的行不写库、不重复创建");
+    assert_eq!(cm2.updated_items, 0, "密码没变就不该更新密码");
     let targets2 = repo::list_targets(&db).unwrap();
     let dup_names: std::collections::HashSet<_> = targets2.iter().map(|t| t.display_name.clone()).collect();
     assert_eq!(dup_names.len(), targets2.len(), "目标名不得出现重复项");
     let a07b = targets2.iter().find(|t| t.display_name == "营销系统A07").unwrap();
-    assert_eq!(a07b.credential_count, 2, "同一目标下允许第二条凭据");
+    assert_eq!(a07b.credential_count, 1, "重导不得在同一账号下再插一条凭据");
 
     // abort：此时全部行都与台账冲突，必须一行不写
     let lk3 = lookup_of(&db, &vk, &user_id);
@@ -359,8 +365,10 @@ fn same_target_multi_alias_rows_all_import_under_skip() {
     assert_eq!(skip2.conflict_rows, 4);
     let upd = importexport::import_commit(&db, &vk, &user_id, &pv2.job_id, Some(csv.to_str().unwrap()), "update", None, &lk2).unwrap();
     assert_eq!(upd.created_targets, 0, "update 复用已有目标");
-    assert_eq!(upd.created_items, 4, "update 是把四条凭据都补进来，不是只补一条");
+    assert_eq!(upd.created_items, 0, "四行同账号同密码，不该重复创建凭据");
+    assert_eq!(upd.unchanged_rows, 4, "四行都判定为保持不变");
     assert_eq!(repo::list_targets(&db).unwrap().len(), 2);
+    assert_eq!(repo::list_items_for_target(&db, jia.id.as_str(), &user_id).unwrap().len(), 3, "甲仍只有 3 条凭据");
 }
 
 /// 文件内 (目标, 别名) 重复仍是冲突：预览与提交必须给同一个答案。
@@ -393,4 +401,127 @@ fn intra_file_duplicate_alias_conflicts_in_both_preview_and_commit() {
     let ab = importexport::import_commit(&db, &vk, &user_id, &pv2.job_id, Some(csv.to_str().unwrap()), "abort", None, &lk2).unwrap();
     assert!(ab.message.contains("中止"), "{}", ab.message);
     assert_eq!(ab.conflict_rows, 1);
+}
+
+/// 四条验收口径的端到端回归：不存在→新增；同账号不同密码→仅更新密码；完全相同→保持不变；
+/// 全程绝不重复创建记录。去重键是 (目标, 用户名)，不是账号别名。
+#[test]
+fn account_level_upsert_creates_updates_password_and_keeps_identical_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let (db, user_id, vk) = setup(dir.path());
+
+    // 一条 CSV 行：地址带路径（模拟 CAS 深链），精确Origin 列留空，标签/备注都填上有值
+    let csv_row = |alias: &str, username: &str, password: &str, tags: &str, note: &str| {
+        let mut f = blank_row();
+        set_row(&mut f, "统一认证", "web", "http://sso.impc.com.cn/sgid-sso/login?service=x", alias, username, password);
+        f[9] = tags.to_string();
+        f[16] = note.to_string();
+        row(f)
+    };
+    let import = |dir: &std::path::Path, name: &str, line: String, db: &Db, vk: &VaultKey, user_id: &str| {
+        let path = write_csv(dir, name, &[line]);
+        let lk = lookup_of(db, vk, user_id);
+        let pv = importexport::import_preview(db, user_id, &path, &lk).unwrap();
+        assert_eq!(pv.error_rows, 0, "用例里的行必须合法：{:?}", pv.errors);
+        importexport::import_commit(db, vk, user_id, &pv.job_id, None, "update", None, &lk).unwrap()
+    };
+    let target_id = || {
+        repo::list_targets(&db)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.display_name == "统一认证")
+            .unwrap()
+            .id
+    };
+    let items = |tid: &str| repo::list_items_for_target(&db, tid, &user_id).unwrap();
+
+    // ① 首次导入：新增目标 + 新增凭据；空 Origin 自动派生为纯 origin
+    let first = import(dir.path(), "first.csv", csv_row("默认账号", "zhangsan", "Old#Pass1", "生产", "首次备注"), &db, &vk, &user_id);
+    assert_eq!(first.created_targets, 1);
+    assert_eq!(first.created_items, 1);
+    assert_eq!(first.updated_items, 0);
+    assert_eq!(first.unchanged_rows, 0);
+    let tid = target_id();
+    assert_eq!(items(&tid).len(), 1, "只有一条凭据");
+    let meta = repo::target_meta(&vk, &db, &tid).unwrap();
+    assert_eq!(meta.allowed_origin, "http://sso.impc.com.cn", "深链地址必须派生出纯 Origin，导入后自动填充才可用");
+    let p1 = repo::item_payload(&vk, &db, &items(&tid)[0].id).unwrap();
+    assert_eq!(p1.username, "zhangsan");
+    assert_eq!(p1.password.expose(), "Old#Pass1");
+    assert_eq!(p1.note, "首次备注");
+    assert_eq!(items(&tid)[0].tags, vec!["生产".to_string()]);
+    assert_eq!(items(&tid)[0].account_alias, "默认账号");
+
+    // ② 同账号但密码不同：只改密码。别名/标签/备注故意给别的值，验证它们一律不动；
+    //    别名换成「另一个别名」也仍能命中——去重按用户名而不是别名。
+    let second = import(dir.path(), "second.csv", csv_row("另一个别名", "zhangsan", "New#Pass2", "新标签", "新备注"), &db, &vk, &user_id);
+    assert_eq!(second.created_targets, 0, "不得重复建目标");
+    assert_eq!(second.created_items, 0, "不得重复创建凭据");
+    assert_eq!(second.updated_items, 1, "仅更新密码");
+    assert_eq!(second.unchanged_rows, 0);
+    assert_eq!(items(&tid).len(), 1, "凭据数仍为 1");
+    let p2 = repo::item_payload(&vk, &db, &items(&tid)[0].id).unwrap();
+    assert_eq!(p2.password.expose(), "New#Pass2", "密码应被更新");
+    assert_eq!(p2.note, "首次备注", "仅更新密码：备注不动");
+    assert_eq!(p2.confirm_before_fill, true, "fail-secure 标记不得被重建清空");
+    assert_eq!(items(&tid)[0].tags, vec!["生产".to_string()], "仅更新密码：标签不动");
+    assert_eq!(items(&tid)[0].account_alias, "默认账号", "仅更新密码：别名不动");
+
+    // ③ 账号与密码完全相同：整行不写，version 也不动
+    let version_before = items(&tid)[0].version;
+    let third = import(dir.path(), "third.csv", csv_row("默认账号", "zhangsan", "New#Pass2", "生产", "首次备注"), &db, &vk, &user_id);
+    assert_eq!(third.created_items, 0);
+    assert_eq!(third.updated_items, 0);
+    assert_eq!(third.unchanged_rows, 1, "完全相同 → 保持不变");
+    assert_eq!(items(&tid).len(), 1, "还是只有一条凭据");
+    assert_eq!(items(&tid)[0].version, version_before, "保持不变就不该碰 version");
+
+    // ④ 同目标下的另一个用户名是另一个账号，应当新增而不是被去重吃掉
+    let fourth = import(dir.path(), "fourth.csv", csv_row("只读", "lisi", "Read#Pass3", "", ""), &db, &vk, &user_id);
+    assert_eq!(fourth.created_items, 1);
+    assert_eq!(items(&tid).len(), 2, "两个用户名 = 两条凭据");
+
+    // ⑤ 同一份文件里重复出现同一个账号：第二行也不能重复插入
+    let dup_line = csv_row("默认账号", "zhangsan", "New#Pass2", "生产", "首次备注");
+    let dup_path = write_csv(dir.path(), "dup.csv", &[dup_line.clone(), dup_line]);
+    let lk3 = lookup_of(&db, &vk, &user_id);
+    let pv3 = importexport::import_preview(&db, &user_id, &dup_path, &lk3).unwrap();
+    let cm3 = importexport::import_commit(&db, &vk, &user_id, &pv3.job_id, None, "update", None, &lk3).unwrap();
+    assert_eq!(cm3.created_items, 0, "文件内重复账号不得重复创建");
+    assert_eq!(cm3.unchanged_rows, 2, "两行都判定为保持不变");
+    assert_eq!(items(&tid).len(), 2, "凭据总数不变");
+}
+
+/// 「Chrome 导入开箱可用」的最后一环：票据必须绑在纯 Origin 上。
+/// 之前 allowed_origin 为空 → issue_fill_ticket 回退绑到带 ?service= 的整串 url，
+/// 扩展上报的 location.origin 是纯串，逐字比对不上，永远停在 NO_PENDING_GRANT。
+#[test]
+fn chrome_shaped_import_binds_fill_ticket_to_the_pure_origin() {
+    let dir = tempfile::tempdir().unwrap();
+    let (db, user_id, vk) = setup(dir.path());
+    let file = dir.path().join("Chrome-密码.csv");
+    std::fs::write(
+        &file,
+        "name,url,username,password,note\n,http://sso.impc.com.cn/sgid-sso/login?service=http%3A%2F%2Fx,zhangsan,Pass#2026,\n",
+    )
+    .unwrap();
+
+    let lk = lookup_of(&db, &vk, &user_id);
+    let pv = importexport::import_preview(&db, &user_id, &file, &lk).unwrap();
+    assert_eq!(pv.error_rows, 0, "真实 Chrome 形状不该报错：{:?}", pv.errors);
+    let cm = importexport::import_commit(&db, &vk, &user_id, &pv.job_id, None, "update", None, &lk).unwrap();
+    assert_eq!(cm.created_items, 1);
+
+    let target = repo::list_targets(&db).unwrap().into_iter().next().unwrap();
+    assert_eq!(repo::target_meta(&vk, &db, &target.id).unwrap().allowed_origin, "http://sso.impc.com.cn");
+    let item_id = repo::list_items_for_target(&db, &target.id, &user_id).unwrap()[0].id.clone();
+
+    let state = VaultState::default();
+    state.unlock(
+        Session { id: "sess-import".into(), user_id: user_id.clone(), started_at: 0, last_activity: 0, reauth_at: None },
+        Arc::new(vk),
+        SearchIndex::new(vec![]),
+    );
+    let (_ticket, binding) = issue_fill_ticket(&db, &TicketStore::default(), &state, &user_id, &item_id).unwrap();
+    assert_eq!(binding.origin, "http://sso.impc.com.cn", "票据必须绑纯 Origin，否则扩展拿不到挑战");
 }

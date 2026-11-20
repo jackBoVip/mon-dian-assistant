@@ -131,6 +131,8 @@ describe('TargetFormDialog 版式（原型 948-1004）', () => {
 
   it('Chrome/Edge 之外的那几栏不再出现，旧的叫法也不留着', () => {
     renderWithClient(<TargetFormDialog open onClose={vi.fn()} onSaved={vi.fn()} />);
+    // 「允许填充 Origin」是详情抽屉撤掉后唯一的可见入口，必须留着（另见下面的专门用例）
+    expect(screen.getByLabelText('允许填充 Origin')).toBeInTheDocument();
     for (const gone of [
       '允许自动填充的精确 Origin（可选）',
       '端口（可选）',
@@ -367,5 +369,64 @@ describe('TargetFormDialog 编辑形态（交付方 2026-10-19：系统要能改
     // 弹窗自己那颗关闭钮与页脚那颗都做同一件事：退出这条编辑，不提交任何东西
     fireEvent.click(screen.getAllByRole('button', { name: '关闭' })[0]);
     expect(mocks.updateTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe('TargetFormDialog 允许填充 Origin（详情抽屉撤掉后的唯一入口）', () => {
+  it('派生预览始终可见：地址空、非网页类型都能看出后端会拿到什么', async () => {
+    renderWithClient(<TargetFormDialog open onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByText(/按地址派生：/)).toBeInTheDocument();
+    expect(screen.getByText(/按地址派生：/)).toHaveTextContent('按地址派生：（当前类型不派生 Origin）');
+    await chooseOption('系统类型', '终端');
+    expect(screen.getByText(/按地址派生：/)).toHaveTextContent('按地址派生：（当前类型不派生 Origin）');
+    expect(screen.getByLabelText('允许填充 Origin')).toHaveValue('');
+  });
+
+  it('未手填时输入框与派生预览一起跟随地址', async () => {
+    renderWithClient(<TargetFormDialog open onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('登录地址 (URL)'), { target: { value: 'https://oa.example.cn/login' } });
+    expect(screen.getByLabelText('允许填充 Origin')).toHaveValue('https://oa.example.cn');
+    expect(screen.getByText(/按地址派生：/)).toHaveTextContent('按地址派生：https://oa.example.cn');
+
+    fireEvent.change(screen.getByLabelText('登录地址 (URL)'), { target: { value: 'http://oa.internal.cn:8080/x' } });
+    expect(screen.getByLabelText('允许填充 Origin')).toHaveValue('http://oa.internal.cn:8080');
+    expect(screen.getByText(/按地址派生：/)).toHaveTextContent('按地址派生：http://oa.internal.cn:8080');
+  });
+
+  it('手填过后改地址也不被派生值覆盖，并提示与派生值不一致', async () => {
+    renderWithClient(<TargetFormDialog open onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('系统名称'), { target: { value: '蒙电OA' } });
+    fireEvent.change(screen.getByLabelText('登录地址 (URL)'), { target: { value: 'https://oa.example.cn/login' } });
+    fireEvent.change(screen.getByLabelText('允许填充 Origin'), { target: { value: 'https://sso.example.cn' } });
+    fireEvent.change(screen.getByLabelText('登录地址 (URL)'), { target: { value: 'http://oa.internal.cn' } });
+
+    expect(screen.getByLabelText('允许填充 Origin')).toHaveValue('https://sso.example.cn');
+    expect(screen.getByText(/当前值与地址派生值不一致/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '保存系统' }));
+    await waitFor(() => expect(mocks.createTarget).toHaveBeenCalledTimes(1));
+    expect(lastPayload()).toMatchObject({ allowedOrigin: 'https://sso.example.cn' });
+  });
+
+  it('导入来的空 Origin：地址一个字没改，打开编辑直接保存即自愈', async () => {
+    mocks.targetDetail.mockResolvedValue(detail({ meta: { ...detail().meta, allowedOrigin: '' } }));
+    renderWithClient(<TargetFormDialog open targetId="t-9" onClose={vi.fn()} onSaved={vi.fn()} />);
+    await screen.findByLabelText('系统名称');
+
+    expect(screen.getByLabelText('允许填充 Origin')).toHaveValue('https://oa.example.cn');
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(mocks.updateTarget).toHaveBeenCalledTimes(1));
+    expect(lastUpdate()[1].allowedOrigin).toBe('https://oa.example.cn');
+  });
+
+  it('F15：导入方刻意指定、与地址 origin 不同的精确 Origin，地址没改时原样带回', async () => {
+    mocks.targetDetail.mockResolvedValue(detail({ meta: { ...detail().meta, allowedOrigin: 'https://sso.example.cn' } }));
+    renderWithClient(<TargetFormDialog open targetId="t-9" onClose={vi.fn()} onSaved={vi.fn()} />);
+    await screen.findByLabelText('系统名称');
+
+    expect(screen.getByLabelText('允许填充 Origin')).toHaveValue('https://sso.example.cn');
+    expect(screen.getByText(/当前值与地址派生值不一致/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(mocks.updateTarget).toHaveBeenCalledTimes(1));
+    expect(lastUpdate()[1].allowedOrigin).toBe('https://sso.example.cn');
   });
 });
