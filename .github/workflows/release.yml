@@ -459,7 +459,7 @@ jobs:
           做过端到端填充验证**（ID 由公钥推导这一步是脚本比对，不是浏览器实测）。
           **Windows 安装包已内嵌 WebView2 Evergreen 离线安装器**（\`webviewInstallMode.type = offlineInstaller\`），
           安装阶段**不需要联网**；装完后运行时由微软的 Edge Update 继续跟进版本，不由本应用负责。
-          代价是 Windows 包体显著增大（内嵌一份完整安装器，确切体积以本 Release 的资源列表为准），
+          代价是 Windows 包体增大到约 **315 MiB**（v1.2.7 实测 315.49 MiB；换成这一档之前是 32.8 MB），
           请在带宽受限的站点按需分发这一枚。
           **装机下限：WebView2 运行时需 Chromium 111 及以上** —— 界面依赖 \`@layer\`、\`@property\`、
           \`color-mix()\` 这三组现代 CSS（Tailwind v4 的官方下限就是 111）；低于下限时样式会成段不生效，
